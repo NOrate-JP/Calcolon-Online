@@ -1,0 +1,20 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="stylesheet" href="../css/style.css"></head><body><div id="app" class="ingame"></div><div id="modal"></div><div id="fx"></div>
+<script type="module">
+import { createGame, reduce, publicView, closeRob, DEVIL_ID } from '../js/engine.js';
+import * as V from '../js/views.js';
+const q = new URLSearchParams(location.search); const N = +(q.get('n')||4); const mode=q.get('m')||'act';
+const uids=['a','b','c','d'].slice(0,N);
+const G=createGame('a',uids,{a:'アリス',b:'ボブ',c:'キャロル',d:'ダン'},{totalDuels:3,robMs:3000});
+G.turn='a'; reduce(G,{t:'draw',uid:'a'});
+G.bows.b=2; G.bows.a=1;
+if(mode==='rob'){ reduce(G,{t:'discard',uid:'a',cardId:G.hands.a[0]}); }
+if(mode==='result'){ G.king='a'; G.step='lastdraw'; for(const u of uids) if(u!=='a'){reduce(G,{t:'draw',uid:u}); } 
+  uids.filter(u=>u!=='a').forEach(u=>{ G.ldone[u]=true; }); import('../js/engine.js').then(()=>{}); }
+let pub=JSON.parse(JSON.stringify(publicView(G)));
+const S={uid:'a',code:'ABCD',meta:{hostUid:'a',status:'playing'},players:{},pub,hand:G.hands.a.slice(),sel:q.get('sel')?G.hands.a[+q.get('sel')]:null,modal:null,prevHand:new Set(G.hands.a),prevTop:null,robbed:-1,lockRev:null,robStart:Date.now()-1000,logOpen:false};
+if(mode==='modal'){ S.modal={type:'trade',cardId:null,reb:true,target:'b',give:[],take:[]}; }
+document.getElementById('app').innerHTML=V.gameHTML(S);
+document.getElementById('modal').innerHTML=V.modalHTML(S);
+window.__ready=true;
+</script></body></html>

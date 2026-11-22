@@ -24,7 +24,8 @@ export function cardKey(id) {
   if (c.kind === 'bow') return 'bow';
   return 'trade' + c.n;
 }
-export const FLAME_KEYS = ['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','tenth','sword','arrow','flame','halberd','shield','bow','trade1','trade2'];
+// フレイムアローで指定できるカード（フレイムアロー自身は1枚だけなので除外、デビルゼロも不可）
+export const FLAME_KEYS = ['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','tenth','sword','arrow','halberd','shield','bow','trade1','trade2'];
 export function keyLabel(k) {
   const m = { tenth: '1/10', sword: '＋ ソード', arrow: '－ アロー', flame: 'フレイムアロー', halberd: '× ハルバード', shield: '÷ シールド', bow: 'ボウ', trade1: 'トレード1', trade2: 'トレード2', devil: 'デビルゼロ' };
   return m[k] || k.replace('n', '');
@@ -36,6 +37,7 @@ export function cardLabel(id) {
   if (c.kind === 'bow') return 'ボウ';
   return 'トレード' + c.n;
 }
+
 export function sortRank(id) {
   const c = CARDS[id];
   if (c.kind === 'num') return c.val === 'D' ? 1.5 : c.val === 'T' ? 0.5 : Number(c.val) + 1;
@@ -75,7 +77,34 @@ function opVars(c, rebel) {
   return r;
 }
 
-/** 手札(ちょうど数字3+記号2)から作れる「下一桁0・整数・0以上」の最大式。作れなければ null */
+/**
+ * 並べた順（数字・記号・数字・記号・数字）で評価する。
+ * mode: 'N'=括弧なし / 'L'=(1〜3枚目) / 'R'=(3〜5枚目)（括弧はボウを2枚以上持っている時のみ）
+ * 「下一桁0・整数・0以上」になる最大の結果を返す。なれなければ null
+ */
+export function evalOrdered(ids, bows = 0, rebel = false, mode = 'N') {
+  if (!ids || ids.length !== 5) return null;
+  const cs = ids.map(i => CARDS[i]);
+  if (cs[0].kind !== 'num' || cs[1].kind !== 'op' || cs[2].kind !== 'num' || cs[3].kind !== 'op' || cs[4].kind !== 'num') return null;
+  if (mode !== 'N' && bows < 2) return null;
+  const nv = [cs[0], cs[2], cs[4]].map(c => numVars(c, rebel)), ov = [cs[1], cs[3]].map(c => opVars(c, rebel));
+  let best = null;
+  for (const a of nv[0]) for (const b of nv[1]) for (const c of nv[2]) for (const o1 of ov[0]) for (const o2 of ov[1]) {
+    let r = null, t;
+    if (mode === 'L') { t = ap(o1.o, a.f, b.f); r = t && ap(o2.o, t, c.f); }
+    else if (mode === 'R') { t = ap(o2.o, b.f, c.f); r = t && ap(o1.o, a.f, t); }
+    else if ((o2.o === 'x' || o2.o === '/') && (o1.o === '+' || o1.o === '-')) { t = ap(o2.o, b.f, c.f); r = t && ap(o1.o, a.f, t); }
+    else { t = ap(o1.o, a.f, b.f); r = t && ap(o2.o, t, c.f); }
+    if (!r || r.d !== 1 || r.n < 0 || r.n % 10 !== 0) continue;
+    if (!best || r.n > best.value) {
+      const text = mode === 'L' ? `(${a.t} ${o1.t} ${b.t}) ${o2.t} ${c.t}` : mode === 'R' ? `${a.t} ${o1.t} (${b.t} ${o2.t} ${c.t})` : `${a.t} ${o1.t} ${b.t} ${o2.t} ${c.t}`;
+      best = { value: r.n, text, mode, ids: ids.slice() };
+    }
+  }
+  return best;
+}
+
+/** 手札(ちょうど5枚)をどう並べ替えても作れる最大の式（ロブ判定・CPU用）。作れなければ null */
 export function solveBest(handIds, bows = 0, rebel = false) {
   const cs = handIds.map(i => CARDS[i]);
   const nums = cs.filter(c => c.kind === 'num'), ops = cs.filter(c => c.kind === 'op');
@@ -83,20 +112,8 @@ export function solveBest(handIds, bows = 0, rebel = false) {
   const modes = bows >= 2 ? ['N', 'L', 'R'] : ['N'];
   let best = null;
   for (const np of perms(nums)) for (const opp of perms(ops)) {
-    const nv = np.map(c => numVars(c, rebel)), ov = opp.map(c => opVars(c, rebel));
-    for (const a of nv[0]) for (const b of nv[1]) for (const c of nv[2])
-      for (const o1 of ov[0]) for (const o2 of ov[1]) for (const m of modes) {
-        let r = null, t;
-        if (m === 'L') { t = ap(o1.o, a.f, b.f); r = t && ap(o2.o, t, c.f); }
-        else if (m === 'R') { t = ap(o2.o, b.f, c.f); r = t && ap(o1.o, a.f, t); }
-        else if ((o2.o === 'x' || o2.o === '/') && (o1.o === '+' || o1.o === '-')) { t = ap(o2.o, b.f, c.f); r = t && ap(o1.o, a.f, t); }
-        else { t = ap(o1.o, a.f, b.f); r = t && ap(o2.o, t, c.f); }
-        if (!r || r.d !== 1 || r.n < 0 || r.n % 10 !== 0) continue;
-        if (!best || r.n > best.value) {
-          const text = m === 'L' ? `(${a.t} ${o1.t} ${b.t}) ${o2.t} ${c.t}` : m === 'R' ? `${a.t} ${o1.t} (${b.t} ${o2.t} ${c.t})` : `${a.t} ${o1.t} ${b.t} ${o2.t} ${c.t}`;
-          best = { value: r.n, text, mode: m, ids: [np[0].id, opp[0].id, np[1].id, opp[1].id, np[2].id] };
-        }
-      }
+    const ids = [np[0].id, opp[0].id, np[1].id, opp[1].id, np[2].id];
+    for (const m of modes) { const r = evalOrdered(ids, bows, rebel, m); if (r && (!best || r.value > best.value)) best = r; }
   }
   return best;
 }
@@ -109,11 +126,12 @@ function say(G, text) { G.log.push(text); if (G.log.length > 60) G.log.shift(); 
 function ev(G, kind, text, uid) { G.events.push({ id: ++G.evSeq, kind, text, uid: uid || null }); if (G.events.length > 10) G.events.shift(); say(G, text); }
 const nextOf = (G, u, k = 1) => G.order[(G.order.indexOf(u) + k) % G.order.length];
 export const leftOf = (G, u) => nextOf(G, u, 1);
+const sameSet = (a, b) => a.length === b.length && [...a].sort((x, y) => x - y).every((v, i) => v === [...b].sort((x, y) => x - y)[i]);
 
 export function createGame(hostUid, uids, names, opts = {}) {
   const G = {
-    hostUid, order: uids.slice(), names: { ...names }, totalDuels: opts.totalDuels || 5, robMs: opts.robMs ?? 3500,
-    duel: 0, scores: {}, nextRebellion: {}, log: [], events: [], evSeq: 0, robSeq: 0, rev: 0, lastWinner: null, phase: 'duel'
+    hostUid, order: uids.slice(), names: { ...names }, cpu: { ...(opts.cpu || {}) }, totalDuels: opts.totalDuels || 5, robMs: opts.robMs ?? 3500, cutMs: opts.cutMs ?? 2600,
+    duel: 0, scores: {}, nextRebellion: {}, log: [], events: [], evSeq: 0, robSeq: 0, cutSeq: 0, rev: 0, lastWinner: null, phase: 'duel'
   };
   uids.forEach(u => { G.scores[u] = 0; });
   startDuel(G, uids[rnd(uids.length)]);
@@ -122,7 +140,8 @@ export function createGame(hostUid, uids, names, opts = {}) {
 
 export function hydrate(G) {
   G.deck = G.deck || []; G.discard = G.discard || []; G.log = G.log || []; G.events = G.events || [];
-  G.robReq = G.robReq || []; G.ldone = G.ldone || {}; G.nextRebellion = G.nextRebellion || {};
+  G.robReq = G.robReq || []; G.ldone = G.ldone || {}; G.confirmed = G.confirmed || {}; G.arr = G.arr || {};
+  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600;
   G.rebellion = G.rebellion || {}; G.bows = G.bows || {}; G.bowIds = G.bowIds || {}; G.hands = G.hands || {};
   G.order.forEach(u => { G.hands[u] = G.hands[u] || []; G.bowIds[u] = G.bowIds[u] || []; G.bows[u] = G.bowIds[u].length; });
   G.devil = G.devil || { holder: null, pushed: false };
@@ -137,7 +156,8 @@ export function startDuel(G, firstUid) {
   G.order.forEach(u => { G.hands[u] = []; G.bows[u] = 0; G.bowIds[u] = []; G.rebellion[u] = !!G.nextRebellion[u]; });
   for (let i = 0; i < 4; i++) G.order.forEach(u => G.hands[u].push(G.deck.pop()));
   G.nextRebellion = {}; G.king = null; G.step = 'draw'; G.turn = firstUid;
-  G.lastDiscard = null; G.robReq = []; G.ldone = {}; G.result = null; G.skipNext = false;
+  G.lastDiscard = null; G.robReq = []; G.ldone = {}; G.confirmed = {}; G.arr = {}; G.trade = null; G.cutKind = null;
+  G.result = null; G.skipNext = false;
   tidy(G);
   const rebs = G.order.filter(u => G.rebellion[u]).map(u => nm(G, u));
   ev(G, 'duel', `デュエル ${G.duel}/${G.totalDuels} 開始！ ${nm(G, firstUid)}から` + (rebs.length ? `（リベリオン: ${rebs.join('、')}）` : ''));
@@ -147,28 +167,29 @@ function drawCard(G) {
   if (!G.deck.length && G.discard.length) { G.deck = shuffle(G.discard); G.discard = []; say(G, '山札が尽きたので捨て札を混ぜ直しました'); }
   return G.deck.length ? G.deck.pop() : null;
 }
-// 手札の並びをランダム化（トレードの「引き抜き」を公平にするため）。デビルゼロは常に先頭
+// デビルゼロの所在更新（押し付けられるまでは「デビルハンド」は付かない＝pushed:false）
 function tidy(G) {
-  G.order.forEach(u => {
-    const h = G.hands[u]; const hasD = h.includes(DEVIL_ID);
-    const rest = shuffle(h.filter(i => i !== DEVIL_ID));
-    G.hands[u] = hasD ? [DEVIL_ID, ...rest] : rest;
-  });
-  const dh = G.order.find(u => G.hands[u].includes(DEVIL_ID));
-  const was = G.devil.pushed;
-  G.devil = { holder: dh || null, pushed: dh ? was : false };
+  const dh = G.order.find(u => G.hands[u].includes(DEVIL_ID)) || null;
+  G.devil = { holder: dh, pushed: dh ? !!G.devil.pushed : false };
 }
 const rm = (arr, id) => { const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); return i >= 0; };
 
 function endTurn(G) {
   let k = 1;
   if (G.skipNext) { k = 2; G.skipNext = false; ev(G, 'skip', `${nm(G, nextOf(G, G.turn, 1))}はスキップ！`); }
-  G.turn = nextOf(G, G.turn, k); G.step = 'draw'; G.lastDiscard = null;
+  G.turn = nextOf(G, G.turn, k); G.step = 'draw'; G.lastDiscard = null; G.trade = null;
 }
 
 function doAttack(G, uid, viaRob) {
-  G.king = uid; G.step = 'lastdraw'; G.ldone = {}; G.skipNext = false; G.robReq = [];
+  G.king = uid; G.step = 'cutin'; G.cutKind = viaRob ? 'rob' : 'attack'; G.cutSeq++;
+  G.ldone = {}; G.confirmed = {}; G.skipNext = false; G.robReq = []; G.trade = null;
+  G.confirmed[uid] = true;
   ev(G, viaRob ? 'rob' : 'attack', viaRob ? `${nm(G, uid)}のロブアタック！` : `${nm(G, uid)}がアタック！`, uid);
+}
+/** カットイン終了 → 全員ラストドロー（ホストのタイマーから呼ぶ） */
+export function finishCutin(G) {
+  if (G.phase !== 'duel' || G.step !== 'cutin') return false;
+  const uid = G.king;
   for (let k = 1; k < G.order.length; k++) {
     const u = nextOf(G, uid, k);
     let got = 0, guard = 0;
@@ -178,14 +199,19 @@ function doAttack(G, uid, viaRob) {
       G.hands[u].push(c); got++;
     }
   }
-  tidy(G);
+  G.step = 'lastdraw'; tidy(G); G.rev++;
+  return true;
+}
+function maybeReveal(G) {
+  if (G.order.every(u => (u === G.king || G.ldone[u]) && G.confirmed[u])) revealAll(G);
 }
 
 function revealAll(G) {
   const per = {}; const comp = [];
   G.order.forEach(u => {
-    const sol = solveBest(G.hands[u], G.bows[u], G.rebellion[u]);
-    per[u] = { hand: G.hands[u].slice(), bows: G.bows[u], text: sol ? sol.text : '', value: sol ? sol.value : null, ids: sol ? sol.ids : [], hasDevil: G.hands[u].includes(DEVIL_ID) };
+    const a = G.arr[u];
+    const sol = a ? evalOrdered(a.ids, G.bows[u], G.rebellion[u], a.mode) : null;
+    per[u] = { hand: G.hands[u].slice(), bows: G.bows[u], text: sol ? sol.text : '', value: sol ? sol.value : null, ids: sol ? sol.ids : [], mode: sol ? sol.mode : 'N', hasDevil: G.hands[u].includes(DEVIL_ID) };
     if (sol) comp.push(u);
   });
   const max = comp.length ? Math.max(...comp.map(u => per[u].value)) : null;
@@ -217,6 +243,14 @@ function revealAll(G) {
 const ERR = msg => ({ ok: false, err: msg });
 const OK = { ok: true };
 const isPlayer = (G, u) => G.order.includes(u);
+const takable = (G, card) => !(card === DEVIL_ID && G.devil.pushed);   // 押し付け済みのデビルゼロは引けない
+
+/** トレードで実際に動かせる枚数 */
+export function tradeCount(G, uid, target, want, excludeId) {
+  const mine = G.hands[uid].filter(i => i !== DEVIL_ID && i !== excludeId).length;
+  const th = G.hands[target].filter(i => takable(G, i)).length;
+  return Math.min(want, mine, th);
+}
 
 export function reduce(G, a) {
   if (!a || !isPlayer(G, a.uid)) return ERR('参加者ではありません');
@@ -239,17 +273,41 @@ function reduceInner(G, a, uid, mine) {
     case 'rebTrade': {
       if (G.phase !== 'duel' || G.step !== 'draw' || G.turn !== uid || !G.rebellion[uid]) return ERR('リベリオントレードはできません');
       const t = a.target; if (!isPlayer(G, t) || t === uid) return ERR('相手が不正です');
-      const give = (a.give || [])[0], take = (a.take || [])[0];
-      if (!mine.includes(give) || give === DEVIL_ID) return ERR('渡すカードが不正です');
-      const th = G.hands[t]; if (take == null || take < 0 || take >= th.length || th[take] === DEVIL_ID) return ERR('引くカードが不正です');
-      const got = th.splice(take, 1)[0]; th.push(give); rm(mine, give); mine.push(got);
-      ev(G, 'trade', `${nm(G, uid)}がリベリオントレード（${nm(G, t)}と1枚交換）`, uid);
+      const n = tradeCount(G, uid, t, 1, null); if (n < 1) return ERR('交換できるカードがありません');
+      G.trade = { by: uid, target: t, n, stage: 'shuffle', reb: true }; G.step = 'trade';
+      ev(G, 'trade', `${nm(G, uid)}がリベリオントレード！ ${nm(G, t)}を指名`, uid);
+      return OK;
+    }
+    case 'tradeReady': {
+      const T = G.trade;
+      if (G.step !== 'trade' || !T || T.stage !== 'shuffle' || T.target !== uid) return ERR('今は確定できません');
+      if (!Array.isArray(a.order) || !sameSet(a.order, mine)) return ERR('手札の並びが不正です');
+      G.hands[uid] = a.order.slice(); T.stage = 'pick';
+      say(G, `${nm(G, uid)}が手札を並べ替えた`);
+      return OK;
+    }
+    case 'tradePick': {
+      const T = G.trade;
+      if (G.step !== 'trade' || !T || T.stage !== 'pick' || T.by !== uid) return ERR('今は選べません');
+      const n = tradeCount(G, uid, T.target, T.n, null);
+      const give = a.give || [], take = a.take || [];
+      if (give.length !== n || take.length !== n || new Set(give).size !== n || new Set(take).size !== n) return ERR('交換枚数が不正です');
+      if (!give.every(g => mine.includes(g) && g !== DEVIL_ID)) return ERR('渡すカードが不正です');
+      const th = G.hands[T.target];
+      if (!take.every(i => Number.isInteger(i) && i >= 0 && i < th.length && takable(G, th[i]))) return ERR('引くカードが不正です');
+      const got = take.map(i => th[i]);
+      G.hands[T.target] = th.filter((_, i) => !take.includes(i)).concat(give);
+      give.forEach(g => rm(mine, g)); got.forEach(g => mine.push(g));
+      ev(G, 'trade', `${nm(G, uid)}と${nm(G, T.target)}が${n}枚交換した`, uid);
       endTurn(G);
       return OK;
     }
     case 'attack': {
       if (G.phase !== 'duel' || G.step !== 'act' || G.turn !== uid) return ERR('今はアタックできません');
-      if (!solveBest(mine, G.bows[uid], G.rebellion[uid])) return ERR('コンプリートしていません');
+      if (!Array.isArray(a.order) || !sameSet(a.order, mine)) return ERR('手札の並びが不正です');
+      const sol = evalOrdered(a.order, G.bows[uid], G.rebellion[uid], a.mode || 'N');
+      if (!sol) return ERR('その並びではコンプリートしていません');
+      G.hands[uid] = a.order.slice(); G.arr[uid] = { ids: sol.ids, mode: sol.mode };
       doAttack(G, uid, false); return OK;
     }
     case 'discard': return discardAct(G, a, uid, mine);
@@ -263,8 +321,15 @@ function reduceInner(G, a, uid, mine) {
       if (G.phase !== 'duel' || G.step !== 'lastdraw' || uid === G.king || G.ldone[uid]) return ERR('今は捨てられません');
       if (!mine.includes(a.cardId)) return ERR('カードが不正です');
       rm(mine, a.cardId); G.discard.push(a.cardId); G.ldone[uid] = true;
-      say(G, `${nm(G, uid)}がラストドローを終えた`);
-      if (G.order.every(u => u === G.king || G.ldone[u])) { tidy(G); revealAll(G); }
+      say(G, `${nm(G, uid)}が1枚捨てた`);
+      return OK;
+    }
+    case 'lastConfirm': {
+      if (G.phase !== 'duel' || G.step !== 'lastdraw' || uid === G.king || !G.ldone[uid] || G.confirmed[uid]) return ERR('今は確定できません');
+      if (!Array.isArray(a.order) || !sameSet(a.order, mine)) return ERR('手札の並びが不正です');
+      G.hands[uid] = a.order.slice(); G.arr[uid] = { ids: a.order.slice(), mode: ['N', 'L', 'R'].includes(a.mode) ? a.mode : 'N' };
+      G.confirmed[uid] = true; say(G, `${nm(G, uid)}が手札を確定した`);
+      maybeReveal(G);
       return OK;
     }
     case 'next': {
@@ -288,7 +353,7 @@ function discardAct(G, a, uid, mine) {
   const id = a.cardId; if (!mine.includes(id)) return ERR('カードが不正です');
   const def = CARDS[id]; const me = nm(G, uid);
   const validTarget = t => isPlayer(G, t) && t !== uid;
-  // --- デビルゼロ: 押し付け ---
+  // --- デビルゼロ: 押し付け（ここで初めてデビルハンドが付く） ---
   if (id === DEVIL_ID) {
     if (G.devil.pushed) return ERR('押し付けられたデビルゼロは捨てられません');
     if (a.effect !== 'push' || !validTarget(a.target) || G.rebellion[a.target]) return ERR('押し付ける相手を選んでください');
@@ -302,23 +367,18 @@ function discardAct(G, a, uid, mine) {
     ev(G, 'bow', `${me}「ボウカードです」→ ${nm(G, l)}へ`, l);
     endTurn(G); return OK;
   }
-  // --- トレード ---
+  // --- トレード（相手指名 → 相手が並べ替え確定 → 引き抜き） ---
   if (def.kind === 'trade') {
     if (a.effect === 'trade') {
       const t = a.target; if (!validTarget(t)) return ERR('相手が不正です');
-      const myAvail = mine.filter(i => i !== id && i !== DEVIL_ID);
-      const thAvail = G.hands[t].filter(i => i !== DEVIL_ID).length;
-      const n = Math.min(def.n, myAvail.length, thAvail);
-      const give = a.give || [], take = a.take || [];
-      if (give.length !== n || take.length !== n || new Set(give).size !== n || new Set(take).size !== n) return ERR('交換枚数が不正です');
-      if (!give.every(g => myAvail.includes(g))) return ERR('渡すカードが不正です');
-      const th = G.hands[t];
-      if (!take.every(i => Number.isInteger(i) && i >= 0 && i < th.length && th[i] !== DEVIL_ID)) return ERR('引くカードが不正です');
-      const got = take.map(i => th[i]);
-      G.hands[t] = th.filter((_, i) => !take.includes(i)).concat(give);
-      rm(mine, id); give.forEach(g => rm(mine, g)); got.forEach(g => mine.push(g)); G.discard.push(id);
-      ev(G, 'trade', `${me}がトレード${def.n}を使用！ ${nm(G, t)}と${n}枚交換`, uid);
-    } else { rm(mine, id); G.discard.push(id); say(G, `${me}がトレード${def.n}を捨てた`); }
+      const n = tradeCount(G, uid, t, def.n, id);
+      rm(mine, id); G.discard.push(id);
+      if (n < 1) { say(G, `${me}のトレードは交換できるカードがなく不発`); endTurn(G); return OK; }
+      G.trade = { by: uid, target: t, n, stage: 'shuffle', reb: false }; G.step = 'trade';
+      ev(G, 'trade', `${me}がトレード${def.n}を使用！ ${nm(G, t)}を指名`, uid);
+      return OK;
+    }
+    rm(mine, id); G.discard.push(id); say(G, `${me}がトレード${def.n}を捨てた`);
     endTurn(G); return OK;
   }
   // --- フレイムアロー（効果） ---
@@ -349,19 +409,26 @@ export function closeRob(G) {
   if (req.length) {
     req.sort((x, y) => ((G.order.indexOf(x) - bi + n) % n) - ((G.order.indexOf(y) - bi + n) % n));
     const r = req[0]; rm(G.discard, G.lastDiscard.id); G.hands[r].push(G.lastDiscard.id);
-    G.lastDiscard = null; doAttack(G, r, true);
+    G.lastDiscard = null;
+    const sol = solveBest(G.hands[r], G.bows[r], G.rebellion[r]);   // ロブアタックは自動で式を組む
+    G.hands[r] = sol.ids.slice(); G.arr[r] = { ids: sol.ids, mode: sol.mode };
+    doAttack(G, r, true);
   } else { G.robReq = []; endTurn(G); }
-  G.rev++;
+  tidy(G); G.rev++;
   return true;
 }
 
 export function publicView(G) {
   const handCounts = {}; G.order.forEach(u => { handCounts[u] = G.hands[u].length; });
+  const dv = G.devil, shown = dv.pushed && dv.holder;
   return {
-    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, order: G.order, names: G.names, hostUid: G.hostUid,
+    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
     turn: G.turn, step: G.step, deckCount: G.deck.length, discardCount: G.discard.length, discardTop: G.discard.slice(-3),
-    lastDiscard: G.lastDiscard || null, handCounts, bows: G.bows, devil: G.devil, rebellion: G.rebellion,
-    scores: G.scores, king: G.king || null, ldone: G.ldone || {}, robSeq: G.robSeq, robMs: G.robMs, skipNext: !!G.skipNext,
-    log: G.log.slice(-40), events: G.events.slice(-8), result: (G.step === 'reveal' || G.phase === 'end') ? G.result : null, rev: G.rev
+    lastDiscard: G.lastDiscard || null, handCounts, bows: G.bows,
+    devil: { holder: shown ? dv.holder : null, pushed: !!dv.pushed, idx: shown ? G.hands[dv.holder].indexOf(DEVIL_ID) : -1 },
+    rebellion: G.rebellion, scores: G.scores, king: G.king || null, ldone: G.ldone || {}, confirmed: G.confirmed || {},
+    trade: G.trade || null, robSeq: G.robSeq, robMs: G.robMs, cutSeq: G.cutSeq, cutMs: G.cutMs, cutKind: G.cutKind || null,
+    skipNext: !!G.skipNext, log: G.log.slice(-40), events: G.events.slice(-8),
+    result: (G.step === 'reveal' || G.phase === 'end') ? G.result : null, rev: G.rev
   };
 }

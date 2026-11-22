@@ -1,13 +1,13 @@
 import * as FB from './fb.js';
 import { Host } from './host.js';
 import { CARDS, DEVIL_ID } from './engine.js';
-import { titleHTML, setupHTML, lobbyHTML, gameHTML, modalHTML, canSelect, esc } from './views.js';
+import { titleHTML, setupHTML, lobbyHTML, gameHTML, modalHTML, canDiscard, modeOf, tradeNFor, normPub, backHTML, esc } from './views.js';
 
 const $ = s => document.querySelector(s);
 const S = {
-  uid: null, name: localStorage.getItem('calc_name') || '', code: null, meta: null, players: {}, pub: null, hand: [],
-  host: null, unsubs: [], sel: null, modal: null, seenEv: -1, prevHand: null, prevTop: null,
-  robSeen: -1, robStart: 0, robbed: -1, lockRev: null, logOpen: false, bannerAt: 0
+  uid: null, name: localStorage.getItem('calc_name') || '', code: null, meta: null, players: {}, pub: null, hand: [], order: [], mode: 'N',
+  host: null, unsubs: [], sel: null, modal: null, tsel: { give: [], take: [] }, tkey: '', seenEv: -1, prevHand: null, prevTop: null,
+  robSeen: -1, robStart: 0, robbed: -1, cutSeen: -1, lockRev: null, logOpen: false, bannerAt: 0, drag: null, flyQ: []
 };
 
 // ---------- 起動 ----------
@@ -64,10 +64,21 @@ async function joinRoom() {
   await FB.set(FB.ref(FB.db, `rooms/${code}/players/${S.uid}`), { name, joinedAt: ps[S.uid] ? ps[S.uid].joinedAt : Date.now() });
   enterRoom(code);
 }
+async function addCpu() {
+  const ids = Object.keys(S.players);
+  if (ids.length >= 4) return toast('満員です（最大4人）');
+  const k = ['A', 'B', 'C'].find(x => !ids.includes('cpu_' + x));
+  if (!k) return;
+  await FB.set(FB.ref(FB.db, `rooms/${S.code}/players/cpu_${k}`), { name: 'CPU-' + k, cpu: true, joinedAt: Date.now() });
+}
+async function removeCpu() {
+  const c = Object.entries(S.players).filter(([, v]) => v.cpu).sort((a, b) => b[1].joinedAt - a[1].joinedAt)[0];
+  if (c) await FB.remove(FB.ref(FB.db, `rooms/${S.code}/players/${c[0]}`));
+}
 function sub(r, cb) { S.unsubs.push(FB.onValue(r, snap => cb(snap.val()))); }
 function enterRoom(code) {
   S.code = code; localStorage.setItem('calc_room', code);
-  S.pub = null; S.hand = []; S.seenEv = -1; S.prevHand = null; S.prevTop = null; S.sel = null; S.modal = null;
+  S.pub = null; S.hand = []; S.order = []; S.mode = 'N'; S.seenEv = -1; S.cutSeen = -1; S.prevHand = null; S.prevTop = null; S.sel = null; S.modal = null;
   const r = p => FB.ref(FB.db, `rooms/${code}/${p}`);
   sub(r('meta'), async v => {
     S.meta = v;
@@ -78,7 +89,7 @@ function enterRoom(code) {
     render();
   });
   sub(r('players'), v => { S.players = v || {}; render(); });
-  sub(r('pub'), v => { S.pub = v; onPub(); render(); });
+  sub(r('pub'), v => { const prev = S.pub; S.pub = normPub(v); onPub(prev); render(); });
   sub(r('hands/' + S.uid), v => { S.hand = v ? (Array.isArray(v) ? v.filter(x => x != null) : Object.values(v)) : []; render(); });
   sub(r('msgs/' + S.uid), v => { if (v && Date.now() - v.t < 6000) { toast(v.text); S.lockRev = null; render(); } });
 }
@@ -87,24 +98,31 @@ function leaveRoom(silent) {
   if (S.host) { S.host.stop(); S.host = null; }
   if (!silent && S.meta && S.meta.status === 'lobby' && S.meta.hostUid !== S.uid) FB.remove(FB.ref(FB.db, `rooms/${S.code}/players/${S.uid}`));
   localStorage.removeItem('calc_room');
-  S.code = null; S.meta = null; S.pub = null; S.hand = []; S.players = {}; S.modal = null; S.sel = null;
+  S.code = null; S.meta = null; S.pub = null; S.hand = []; S.order = []; S.players = {}; S.modal = null; S.sel = null;
   render();
 }
 
 // ---------- 状態更新フック ----------
-const BANNER = { attack: 'ATTACK!', rob: 'ROB ATTACK!', kingkill: 'KING KILLING', burst: 'BURST', devilburst: 'DEVIL BURST', devil: 'DEVIL ZERO', reb: 'REBELLION', skip: 'SKIP', trade: 'TRADE', flame: 'FLAME ARROW', bow: 'BOW', end: 'GAME SET' };
-function onPub() {
+const BANNER = { kingkill: 'KING KILLING', burst: 'BURST', devilburst: 'DEVIL BURST', devil: 'DEVIL ZERO', reb: 'REBELLION', skip: 'SKIP', trade: 'TRADE', flame: 'FLAME ARROW', bow: 'BOW', end: 'GAME SET' };
+function onPub(prev) {
   const P = S.pub; if (!P) return;
-  const evs = P.events || [];
+  const evs = P.events;
   const maxId = evs.length ? evs[evs.length - 1].id : 0;
   if (S.seenEv < 0) S.seenEv = maxId;
   else { evs.filter(e => e.id > S.seenEv).forEach(e => banner(e)); S.seenEv = Math.max(S.seenEv, maxId); }
   if (P.step === 'rob' && P.robSeq !== S.robSeen) { S.robSeen = P.robSeq; S.robStart = Date.now(); }
+  if (P.step === 'cutin' && P.cutSeq !== S.cutSeen) { S.cutSeen = P.cutSeq; showCutin(P); }
+  const tk = `${P.step}|${P.trade ? P.trade.stage + P.trade.by : ''}`;
+  if (tk !== S.tkey) { S.tkey = tk; S.tsel = { give: [], take: [] }; }
+  // ドローの描写
+  if (prev && P.phase === 'duel' && P.deckCount < prev.deckCount) {
+    if (prev.step === 'draw') S.flyQ.push({ uid: prev.turn, n: 1 });
+    else if (prev.step === 'cutin' && P.step === 'lastdraw') P.order.filter(u => u !== P.king).forEach(u => S.flyQ.push({ uid: u, n: 2 }));
+  }
   if (S.sel != null && !S.hand.includes(S.sel)) S.sel = null;
 }
 function banner(e) {
-  let text = BANNER[e.kind]; if (e.kind === 'duel') text = 'DUEL';
-  if (!text) return;
+  const text = BANNER[e.kind]; if (!text) return;
   const at = Math.max(Date.now(), S.bannerAt); S.bannerAt = at + 1100;
   setTimeout(() => {
     const d = document.createElement('div'); d.className = 'banner b-' + e.kind;
@@ -112,10 +130,40 @@ function banner(e) {
     $('#fx').appendChild(d); setTimeout(() => d.remove(), 2300);
   }, at - Date.now());
 }
+function showCutin(P) {
+  const d = document.createElement('div'); d.className = 'cutin ' + (P.cutKind || 'attack');
+  d.style.setProperty('--ms', P.cutMs + 'ms');
+  d.innerHTML = `<div class="cflash"></div><div class="cband"><span class="cwho">${esc(P.names[P.king])}</span><span class="ctext">${P.cutKind === 'rob' ? 'ROB ATTACK!' : 'ATTACK!'}</span></div><div class="cslash"></div>`;
+  $('#fx').appendChild(d); setTimeout(() => d.remove(), P.cutMs + 150);
+}
+function runFly() {
+  const q = S.flyQ; S.flyQ = [];
+  q.forEach(({ uid, n }) => { for (let i = 0; i < n; i++) setTimeout(() => fly(uid), i * 260); });
+}
+function fly(uid) {
+  const deck = document.querySelector('.pilebox .pile'); if (!deck) return;
+  const dest = uid === S.uid ? document.querySelector('.me .hand') : document.querySelector(`.seat[data-uid="${CSS.escape(uid)}"] .rack`);
+  if (!dest) return;
+  const a = deck.getBoundingClientRect(), b = dest.getBoundingClientRect(); const sz = 56;
+  const el = document.createElement('div'); el.className = 'flyer'; el.innerHTML = backHTML('');
+  const ax = a.left + a.width / 2 - sz / 2, ay = a.top + a.height / 2 - sz / 2;
+  const bx = (uid === S.uid ? b.left + b.width * 0.62 : b.left + b.width / 2) - sz / 2, by = b.top + b.height / 2 - sz / 2;
+  $('#fx').appendChild(el);
+  const an = el.animate([
+    { transform: `translate(${ax}px,${ay}px) scale(1.3) rotate(-10deg)`, opacity: 1 },
+    { transform: `translate(${(ax + bx) / 2}px,${Math.min(ay, by) - 40}px) scale(1.1) rotate(10deg)`, opacity: 1, offset: 0.5 },
+    { transform: `translate(${bx}px,${by}px) scale(.85) rotate(0deg)`, opacity: .9 }
+  ], { duration: 560, easing: 'cubic-bezier(.3,.7,.3,1)' });
+  an.onfinish = () => el.remove();
+}
 let toastT;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200); }
 
 // ---------- 描画 ----------
+function syncOrder() {
+  S.order = S.order.filter(id => S.hand.includes(id));
+  S.hand.forEach(id => { if (!S.order.includes(id)) S.order.push(id); });
+}
 function render() {
   const app = $('#app');
   if (!S.uid) { app.innerHTML = ''; return; }
@@ -127,11 +175,13 @@ function render() {
     if (keep && $('#' + keep)) $('#' + keep).focus();
     return;
   }
+  syncOrder();
   app.className = 'ingame';
   app.innerHTML = gameHTML(S);
   $('#modal').innerHTML = modalHTML(S);
   S.prevHand = new Set(S.hand);
-  const P = S.pub; S.prevTop = P.discardCount + '-' + ((P.discardTop || [])[(P.discardTop || []).length - 1] ?? 'x');
+  const P = S.pub; S.prevTop = P.discardCount + '-' + (P.discardTop[P.discardTop.length - 1] ?? 'x');
+  runFly();
 }
 
 // ---------- 操作 ----------
@@ -140,18 +190,15 @@ function send(a) {
   setTimeout(() => { if (S.lockRev != null) { S.lockRev = null; render(); } }, 4000);
   FB.push(FB.ref(FB.db, `rooms/${S.code}/actions`), { uid: S.uid, ...a });
 }
-function pick(arr, id, max) { const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1); else { if (arr.length >= max) arr.shift(); arr.push(id); } }
-function tradeN() {
-  const P = S.pub, M = S.modal; const want = M.reb ? 1 : CARDS[M.cardId].n;
-  const mine = S.hand.filter(i => i !== M.cardId && i !== DEVIL_ID);
-  const th = P.handCounts[M.target] - (P.devil.holder === M.target ? 1 : 0);
-  return Math.min(want, mine.length, th);
-}
+function toggle(arr, v, max) { const i = arr.indexOf(v); if (i >= 0) arr.splice(i, 1); else { if (arr.length >= max) arr.shift(); arr.push(v); } }
+function tradeN() { const T = S.pub.trade; return tradeNFor(S.pub, S.hand, T.target, T.n, null); }
 function act(name, el) {
   const P = S.pub;
   switch (name) {
     case 'create': return createRoom();
     case 'join': return joinRoom();
+    case 'addcpu': return addCpu();
+    case 'rmcpu': return removeCpu();
     case 'leave': if (confirm('退出しますか？')) leaveRoom(); return;
     case 'start': {
       const ps = Object.entries(S.players).map(([uid, v]) => ({ uid, ...v })).sort((a, b) => a.joinedAt - b.joinedAt).slice(0, 4);
@@ -160,40 +207,67 @@ function act(name, el) {
       return S.host.startGame(ps, { totalDuels: S.meta.totalDuels, robMs: S.meta.robMs });
     }
     case 'draw': return send({ t: 'draw' });
-    case 'attack': return send({ t: 'attack' });
+    case 'attack': return send({ t: 'attack', order: S.order.slice(), mode: modeOf(S) });
     case 'rob': S.robbed = P.robSeq; send({ t: 'rob' }); S.lockRev = null; return render();
     case 'discard': send({ t: 'discard', cardId: S.sel }); S.sel = null; return;
     case 'skip': send({ t: 'discard', cardId: S.sel, effect: 'skip' }); S.sel = null; return;
     case 'lastdiscard': send({ t: 'lastDiscard', cardId: S.sel }); S.sel = null; return;
+    case 'lconfirm': return send({ t: 'lastConfirm', order: S.order.slice(), mode: modeOf(S) });
+    case 'tready': return send({ t: 'tradeReady', order: S.order.slice() });
+    case 'mvl': case 'mvr': {
+      const i = S.order.indexOf(S.sel), j = name === 'mvl' ? i - 1 : i + 1;
+      if (i < 0 || j < 0 || j >= S.order.length) return;
+      [S.order[i], S.order[j]] = [S.order[j], S.order[i]]; return render();
+    }
+    case 'mode': S.mode = el.dataset.m; return render();
     case 'push': S.modal = { type: 'push', cardId: S.sel }; return render();
     case 'flame': S.modal = { type: 'flame', cardId: S.sel }; return render();
-    case 'trade': S.modal = { type: 'trade', cardId: S.sel, target: null, give: [], take: [] }; return render();
-    case 'rebtrade': S.modal = { type: 'trade', cardId: null, reb: true, target: null, give: [], take: [] }; return render();
+    case 'trade': S.modal = { type: 'trade', cardId: S.sel }; return render();
+    case 'rebtrade': S.modal = { type: 'trade', cardId: null, reb: true }; return render();
     case 'mclose': S.modal = null; return render();
     case 'mpush': send({ t: 'discard', cardId: S.modal.cardId, effect: 'push', target: el.dataset.u }); S.modal = null; S.sel = null; return render();
     case 'mflame': send({ t: 'discard', cardId: S.modal.cardId, effect: 'flame', key: el.dataset.k }); S.modal = null; S.sel = null; return render();
-    case 'mtarget': S.modal.target = el.dataset.u; S.modal.give = []; S.modal.take = []; return render();
-    case 'mgive': pick(S.modal.give, +el.dataset.id, tradeN()); return render();
-    case 'mtake': pick(S.modal.take, +el.dataset.i, tradeN()); return render();
-    case 'mgo': {
-      const M = S.modal; const base = { target: M.target, give: M.give.slice(), take: M.take.slice() };
-      if (M.reb) send({ t: 'rebTrade', ...base });
-      else send({ t: 'discard', cardId: M.cardId, effect: 'trade', ...base });
+    case 'mtarget': {
+      const M = S.modal;
+      if (M.reb) send({ t: 'rebTrade', target: el.dataset.u });
+      else send({ t: 'discard', cardId: M.cardId, effect: 'trade', target: el.dataset.u });
       S.modal = null; S.sel = null; return render();
     }
+    case 'tgive': toggle(S.tsel.give, +el.dataset.id, tradeN()); return render();
+    case 'ttake': toggle(S.tsel.take, +el.dataset.i, tradeN()); return render();
+    case 'tgo': send({ t: 'tradePick', give: S.tsel.give.slice(), take: S.tsel.take.slice() }); S.tsel = { give: [], take: [] }; return;
     case 'next': return send({ t: 'next' });
     case 'rematch': return send({ t: 'rematch' });
     case 'log': S.logOpen = !S.logOpen; return render();
   }
 }
 document.addEventListener('click', e => {
-  const b = e.target.closest('[data-act]');
-  if (b && !b.disabled && !b.classList.contains('card')) { act(b.dataset.act, b); return; }
   const c = e.target.closest('[data-act].card');
   if (c) { act(c.dataset.act, c); return; }
+  const b = e.target.closest('[data-act]');
+  if (b && !b.disabled) { act(b.dataset.act, b); return; }
   const h = e.target.closest('.hand .card');
-  if (h && S.pub && canSelect(S)) { const id = +h.dataset.id; S.sel = S.sel === id ? null : id; render(); }
+  if (h && S.pub) { const id = +h.dataset.id; S.sel = S.sel === id ? null : id; render(); }
 });
+// 手札のドラッグ並べ替え（PC）。スマホは ◀ ▶ ボタンで並べ替え
+document.addEventListener('dragstart', e => {
+  const c = e.target.closest && e.target.closest('.hand .card'); if (!c) return;
+  S.drag = +c.dataset.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(S.drag));
+});
+document.addEventListener('dragover', e => { if (S.drag != null && e.target.closest && e.target.closest('.hand')) e.preventDefault(); });
+document.addEventListener('drop', e => {
+  if (S.drag == null) return;
+  const hand = e.target.closest && e.target.closest('.hand'); if (!hand) { S.drag = null; return; }
+  e.preventDefault();
+  const t = e.target.closest('.hand .card'), o = S.order, from = o.indexOf(S.drag);
+  if (from >= 0) {
+    const ti = t ? o.indexOf(+t.dataset.id) : -1;
+    o.splice(from, 1);
+    if (t && ti >= 0 && +t.dataset.id !== S.drag) o.splice(ti, 0, S.drag); else o.push(S.drag);
+  }
+  S.drag = null; S.sel = null; render();
+});
+document.addEventListener('dragend', () => { S.drag = null; });
 document.addEventListener('change', e => {
   if (!S.meta || S.meta.hostUid !== S.uid) return;
   if (e.target.id === 'sel-duels') FB.update(FB.ref(FB.db, `rooms/${S.code}/meta`), { totalDuels: +e.target.value });

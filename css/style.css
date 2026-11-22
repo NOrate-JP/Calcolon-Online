@@ -130,12 +130,12 @@ button{font:inherit}
 .preview{font-size:14px;color:#cfeccf;background:#0a2a14cc;border:1px solid #4cc56a88;padding:3px 14px;border-radius:2px}
 .preview b{font-family:var(--fnum);font-size:18px;color:#fff}
 .hand{display:flex;justify-content:center;align-items:flex-end;padding:18px 8px 0;min-height:calc(var(--cw) + 30px);--cw:clamp(66px,13vw,122px)}
-.hand .card{--cw:clamp(66px,13vw,122px);margin:0 calc(var(--cw)*-.05);transform:translateY(0) rotate(var(--rot,0deg));transition:transform .16s,filter .16s}
+.hand .card{--cw:clamp(66px,13vw,122px);margin:0 3px;transform:translateY(0);transition:transform .16s,filter .16s}
 .hand .card.pick{cursor:pointer}
-.hand .card.pick:hover{transform:translateY(-14px) rotate(var(--rot,0deg))}
-.hand .card.sel{transform:translateY(-32px) scale(1.07) rotate(0deg)!important;filter:drop-shadow(0 0 12px #ffd86b) drop-shadow(0 6px 4px #000);z-index:5}
-.hand .card.enter{animation:enter .55s cubic-bezier(.2,.9,.3,1.1)}
-@keyframes enter{from{opacity:0;transform:translate(-45vw,-55vh) scale(.5) rotate(-30deg)}}
+.hand .card.pick:hover{transform:translateY(-14px)}
+.hand .card.sel{transform:translateY(-30px)!important;filter:drop-shadow(0 0 12px #ffd86b) drop-shadow(0 6px 4px #000);z-index:5}
+.hand .card.enter{animation:enter .3s .5s backwards}
+@keyframes enter{from{opacity:0;transform:translateY(-26px) scale(.8)}}
 .rackbar{position:relative;z-index:6;width:min(720px,90vw);height:16px;margin-top:-16px;background:linear-gradient(#b02a44,#5b0e20 70%,#3a0713);border-radius:3px;box-shadow:0 7px 12px #000b,inset 0 2px 0 #ffa9b8aa;transform:perspective(420px) rotateX(38deg);pointer-events:none}
 .logbox{position:absolute;left:8px;bottom:8px;z-index:20;width:min(300px,46vw);font-size:11.5px;line-height:1.5;color:#d8c89a;background:#000a;border:1px solid #d9bd7233;padding:4px 8px;cursor:pointer;max-height:84px;overflow:hidden}
 .logbox.open{max-height:50vh;overflow:auto;background:#000d}
@@ -198,6 +198,37 @@ button{font:inherit}
   .rrow{grid-template-columns:1fr;gap:4px}.rwho{text-align:center}
   .logbox{bottom:auto;top:50px;left:4px;width:44vw;max-height:58px;font-size:10.5px}
   .statusline{font-size:13px}
-  .hand{--cw:clamp(58px,17vw,96px)}.hand .card{--cw:clamp(58px,17vw,96px);margin:0 calc(var(--cw)*-.1)}
+  .hand .paren{--cw:clamp(46px,15.5vw,92px)}
+  .hand{--cw:clamp(46px,15.5vw,92px)}.hand .card{--cw:clamp(46px,15.5vw,92px);margin:0 1px}
 }
 @media (prefers-reduced-motion:reduce){*{animation-duration:.01s!important;animation-delay:0s!important;transition:none!important}}
+
+/* 手札の括弧・ツール */
+.paren{align-self:center;font-family:var(--fnum);font-weight:900;font-size:calc(var(--cw,90px)*.7);color:#ffd86b;text-shadow:0 0 10px #c3182c,0 2px 0 #000;padding:0 2px;line-height:1;margin-top:-6px}
+.paren.s{font-size:calc(var(--cw,60px)*.8)}
+.hand .paren{--cw:clamp(66px,13vw,122px)}
+.tools{display:flex;gap:6px;align-items:center;justify-content:center;flex-wrap:wrap}
+.tools .sep{width:12px}.tools .tl{font-size:12px;color:#cdb98a}
+.tools .btn.gold.mini{color:#2a1604}
+.hand .card[draggable=true]{cursor:grab}
+.bd.cpu,em.cpu{background:#2a3a55!important;color:#bcd4ff!important;border-color:#6f93d6!important}
+.mcards .card[data-act]{cursor:pointer}
+
+/* 山札からのドロー（飛ぶカード） */
+.flyer{position:fixed;left:0;top:0;width:56px;height:56px;z-index:70;pointer-events:none;will-change:transform}
+.flyer .card{--cw:56px}
+
+/* アタックのカットイン */
+.cutin{position:absolute;inset:0;overflow:hidden;animation:cutbg var(--ms,2600ms) linear forwards;background:radial-gradient(ellipse at 50% 50%,#0000 20%,#000c 90%)}
+.cflash{position:absolute;inset:0;background:#fff;opacity:0;animation:flash .5s .05s ease-out}
+.cband{position:absolute;left:-10%;right:-10%;top:50%;height:min(34vh,260px);transform:translateY(-50%) skewY(-6deg);background:linear-gradient(90deg,#14020600,#5a0b19 12%,#c3182c 50%,#5a0b19 88%,#14020600);box-shadow:0 0 60px #c3182c,inset 0 8px 0 #ffd86b66,inset 0 -8px 0 #ffd86b66;display:flex;flex-direction:column;align-items:center;justify-content:center;animation:bandin .45s cubic-bezier(.1,.8,.2,1) both}
+.cwho{font-size:clamp(16px,3.4vw,30px);color:#ffe9b8;letter-spacing:.2em;text-shadow:0 2px 4px #000;transform:skewY(6deg);animation:whoin .5s .3s both}
+.ctext{font-family:var(--fgothic);font-size:clamp(54px,14vw,170px);line-height:1;color:#fff;text-shadow:0 0 24px #ffd86b,0 0 60px #ff2a3c,0 8px 0 #4a0510;transform:skewY(6deg);animation:txtin .6s .15s cubic-bezier(.1,.9,.2,1.2) both}
+.cutin.rob .cband{background:linear-gradient(90deg,#1a0a0000,#7a3a05 12%,#ff8a1e 50%,#7a3a05 88%,#1a0a0000)}
+.cslash{position:absolute;left:-20%;top:46%;width:140%;height:6px;background:linear-gradient(90deg,#fff0,#fff,#fff0);transform:rotate(-8deg) scaleX(0);animation:slash .5s .1s ease-out forwards;box-shadow:0 0 18px #fff}
+@keyframes cutbg{0%,88%{opacity:1}100%{opacity:0}}
+@keyframes flash{0%{opacity:.85}100%{opacity:0}}
+@keyframes bandin{from{transform:translateY(-50%) skewY(-6deg) translateX(-110%)}to{transform:translateY(-50%) skewY(-6deg) translateX(0)}}
+@keyframes txtin{from{opacity:0;transform:skewY(6deg) scale(2.8)}to{opacity:1;transform:skewY(6deg) scale(1)}}
+@keyframes whoin{from{opacity:0;transform:skewY(6deg) translateY(14px)}to{opacity:1;transform:skewY(6deg)}}
+@keyframes slash{to{transform:rotate(-8deg) scaleX(1)}}

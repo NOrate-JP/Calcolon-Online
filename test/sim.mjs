@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { CARDS, DEVIL_ID, solveBest, evalOrdered, createGame, reduce, closeRob, finishCutin, publicView, FLAME_KEYS } from '../js/engine.js';
+import { CARDS, DEVIL_ID, solveBest, evalOrdered, createGame, reduce, closeRob, finishCutin, advanceShowdown, publicView, FLAME_KEYS } from '../js/engine.js';
 import { cpuAction } from '../js/cpu.js';
 
 const find = (pred, used = []) => CARDS.find(c => pred(c) && !used.includes(c.id)).id;
@@ -40,6 +40,7 @@ for (let g = 0; g < 300; g++) {
   while (G.phase !== 'end' && guard++ < 6000) {
     G.events.forEach(e => { if (e.id > lastEv) { lastEv = e.id; if (stat[e.kind] != null) stat[e.kind]++; } });
     if (G.step === 'cutin') { assert.ok(finishCutin(G)); continue; }
+    if (G.step === 'showdown') { assert.ok(advanceShowdown(G)); continue; }
     if (G.step === 'reveal') { assert.ok(reduce(G, { t: 'next', uid: 'a' }).ok); continue; }
     let acted = false;
     for (const u of uids) { const a = cpuAction(G, u); if (a) { const r = reduce(G, a); assert.ok(r.ok, JSON.stringify([r.err, a, G.step])); acted = true; stat.steps++; break; } }

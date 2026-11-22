@@ -7,7 +7,7 @@ const $ = s => document.querySelector(s);
 const S = {
   uid: null, name: localStorage.getItem('calc_name') || '', code: null, meta: null, players: {}, pub: null, hand: [], order: [], mode: 'N',
   host: null, unsubs: [], sel: null, modal: null, tsel: { give: [], take: [] }, tkey: '', seenEv: -1, prevHand: null, prevTop: null,
-  robSeen: -1, robStart: 0, robbed: -1, cutSeen: -1, lockRev: null, logOpen: false, bannerAt: 0, drag: null, flyQ: []
+  robSeen: -1, robStart: 0, robbed: -1, cutSeen: -1, lockRev: null, logOpen: false, bannerAt: 0, drag: null, flyQ: [], flip: false, revSeen: new Set()
 };
 
 // ---------- 起動 ----------
@@ -78,7 +78,7 @@ async function removeCpu() {
 function sub(r, cb) { S.unsubs.push(FB.onValue(r, snap => cb(snap.val()))); }
 function enterRoom(code) {
   S.code = code; localStorage.setItem('calc_room', code);
-  S.pub = null; S.hand = []; S.order = []; S.mode = 'N'; S.seenEv = -1; S.cutSeen = -1; S.prevHand = null; S.prevTop = null; S.sel = null; S.modal = null;
+  S.pub = null; S.hand = []; S.order = []; S.mode = 'N'; S.seenEv = -1; S.cutSeen = -1; S.revSeen = new Set(); S.prevHand = null; S.prevTop = null; S.sel = null; S.modal = null;
   const r = p => FB.ref(FB.db, `rooms/${code}/${p}`);
   sub(r('meta'), async v => {
     S.meta = v;
@@ -103,7 +103,7 @@ function leaveRoom(silent) {
 }
 
 // ---------- 状態更新フック ----------
-const BANNER = { kingkill: 'KING KILLING', burst: 'BURST', devilburst: 'DEVIL BURST', devil: 'DEVIL ZERO', reb: 'REBELLION', skip: 'SKIP', trade: 'TRADE', flame: 'FLAME ARROW', bow: 'BOW', end: 'GAME SET' };
+const BANNER = { devil: 'DEVIL ZERO', skip: 'SKIP', trade: 'TRADE', flame: 'FLAME ARROW', bow: 'BOW', end: 'GAME SET' };
 function onPub(prev) {
   const P = S.pub; if (!P) return;
   const evs = P.events;
@@ -138,23 +138,32 @@ function showCutin(P) {
 }
 function runFly() {
   const q = S.flyQ; S.flyQ = [];
-  q.forEach(({ uid, n }) => { for (let i = 0; i < n; i++) setTimeout(() => fly(uid), i * 260); });
+  let n = 0; q.forEach(x => { n += x.n; });
+  for (let i = 0; i < n; i++) setTimeout(fly, i * 200);
 }
-function fly(uid) {
+// 山札の中央から、上に1枚動きながらフェードアウト（捨てる時の逆のイメージ）
+function fly() {
   const deck = document.querySelector('.pilebox .pile'); if (!deck) return;
-  const dest = uid === S.uid ? document.querySelector('.me .hand') : document.querySelector(`.seat[data-uid="${CSS.escape(uid)}"] .rack`);
-  if (!dest) return;
-  const a = deck.getBoundingClientRect(), b = dest.getBoundingClientRect(); const sz = 56;
-  const el = document.createElement('div'); el.className = 'flyer'; el.innerHTML = backHTML('');
-  const ax = a.left + a.width / 2 - sz / 2, ay = a.top + a.height / 2 - sz / 2;
-  const bx = (uid === S.uid ? b.left + b.width * 0.62 : b.left + b.width / 2) - sz / 2, by = b.top + b.height / 2 - sz / 2;
+  const a = deck.getBoundingClientRect(); const sz = Math.max(48, a.width);
+  const el = document.createElement('div'); el.className = 'flyer'; el.style.width = el.style.height = sz + 'px'; el.style.setProperty('--cw', sz + 'px');
+  el.innerHTML = backHTML('');
+  const x = a.left + a.width / 2 - sz / 2, y = a.top + a.height / 2 - sz / 2;
   $('#fx').appendChild(el);
   const an = el.animate([
-    { transform: `translate(${ax}px,${ay}px) scale(1.3) rotate(-10deg)`, opacity: 1 },
-    { transform: `translate(${(ax + bx) / 2}px,${Math.min(ay, by) - 40}px) scale(1.1) rotate(10deg)`, opacity: 1, offset: 0.5 },
-    { transform: `translate(${bx}px,${by}px) scale(.85) rotate(0deg)`, opacity: .9 }
-  ], { duration: 560, easing: 'cubic-bezier(.3,.7,.3,1)' });
+    { transform: `translate(${x}px,${y}px) scale(1)`, opacity: 1 },
+    { transform: `translate(${x}px,${y - 95}px) scale(1.08)`, opacity: 0 }
+  ], { duration: 650, easing: 'ease-out' });
   an.onfinish = () => el.remove();
+}
+function captureHand() {
+  const m = {}; document.querySelectorAll('.hand .card').forEach(c => { m[c.dataset.id] = c.getBoundingClientRect().left; }); return m;
+}
+function playFlip(before) {
+  document.querySelectorAll('.hand .card').forEach(c => {
+    const o = before[c.dataset.id]; if (o == null) return;
+    const dx = o - c.getBoundingClientRect().left; if (Math.abs(dx) < 1) return;
+    c.animate([{ transform: `translateX(${dx}px)` }, { transform: 'translateX(0)' }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  });
 }
 let toastT;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('on'), 3200); }
@@ -176,11 +185,15 @@ function render() {
     return;
   }
   syncOrder();
+  const before = S.flip ? captureHand() : null; S.flip = false;
   app.className = 'ingame';
   app.innerHTML = gameHTML(S);
   $('#modal').innerHTML = modalHTML(S);
+  if (before) playFlip(before);
   S.prevHand = new Set(S.hand);
-  const P = S.pub; S.prevTop = P.discardCount + '-' + (P.discardTop[P.discardTop.length - 1] ?? 'x');
+  const P = S.pub;
+  if (P.shownInfo) Object.keys(P.shownInfo).forEach(u => S.revSeen.add(P.duel + ':' + u));
+  if (P.step === 'reveal' && P.show) P.show.list.forEach(u => S.revSeen.add(P.duel + ':' + u)); S.prevTop = P.discardCount + '-' + (P.discardTop[P.discardTop.length - 1] ?? 'x');
   runFly();
 }
 
@@ -211,6 +224,7 @@ function act(name, el) {
     case 'rob': S.robbed = P.robSeq; send({ t: 'rob' }); S.lockRev = null; return render();
     case 'discard': send({ t: 'discard', cardId: S.sel }); S.sel = null; return;
     case 'skip': send({ t: 'discard', cardId: S.sel, effect: 'skip' }); S.sel = null; return;
+    case 'devdiscard': send({ t: 'devilDiscard', cardId: S.sel }); S.sel = null; return;
     case 'lastdiscard': send({ t: 'lastDiscard', cardId: S.sel }); S.sel = null; return;
     case 'lconfirm': return send({ t: 'lastConfirm', order: S.order.slice(), mode: modeOf(S) });
     case 'tready': return send({ t: 'tradeReady', order: S.order.slice() });
@@ -253,6 +267,7 @@ document.addEventListener('click', e => {
 document.addEventListener('dragstart', e => {
   const c = e.target.closest && e.target.closest('.hand .card'); if (!c) return;
   S.drag = +c.dataset.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(S.drag));
+  setTimeout(() => c.classList.add('dragging'), 0);
 });
 document.addEventListener('dragover', e => { if (S.drag != null && e.target.closest && e.target.closest('.hand')) e.preventDefault(); });
 document.addEventListener('drop', e => {
@@ -265,9 +280,9 @@ document.addEventListener('drop', e => {
     o.splice(from, 1);
     if (t && ti >= 0 && +t.dataset.id !== S.drag) o.splice(ti, 0, S.drag); else o.push(S.drag);
   }
-  S.drag = null; S.sel = null; render();
+  S.drag = null; S.sel = null; S.flip = true; render();
 });
-document.addEventListener('dragend', () => { S.drag = null; });
+document.addEventListener('dragend', () => { S.drag = null; document.querySelectorAll('.dragging').forEach(c => c.classList.remove('dragging')); });
 document.addEventListener('change', e => {
   if (!S.meta || S.meta.hostUid !== S.uid) return;
   if (e.target.id === 'sel-duels') FB.update(FB.ref(FB.db, `rooms/${S.code}/meta`), { totalDuels: +e.target.value });

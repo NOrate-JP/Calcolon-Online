@@ -10,7 +10,9 @@ export function normPub(P) {
   P.log = P.log || []; P.events = P.events || []; P.discardTop = P.discardTop || [];
   P.devil = P.devil || { holder: null, pushed: false, idx: -1 };
   P.rebellion = P.rebellion || {}; P.bows = P.bows || {}; P.handCounts = P.handCounts || {}; P.scores = P.scores || {};
-  P.order = P.order || []; P.names = P.names || {};
+  P.order = P.order || []; P.names = P.names || {}; P.shownInfo = P.shownInfo || {};
+  if (P.show) P.show.shown = P.show.shown || [];
+  Object.values(P.shownInfo).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
   if (P.result && P.result.per) Object.values(P.result.per).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
   return P;
 }
@@ -20,7 +22,7 @@ function faceParts(id) {
   const c = CARDS[id];
   if (c.kind === 'num') { if (c.val === 'T') return ['1/10', '']; if (c.val === 'D') return ['0', 'デビルゼロ']; return [c.val, '']; }
   if (c.kind === 'op') return [OP_SYM[c.op], c.flame ? '🔥フレイム' : OP_JP[c.op]];
-  if (c.kind === 'bow') return ['( )', 'ボウ'];
+  if (c.kind === 'bow') return ['(', 'ボウ'];
   return ['⇄', 'トレード' + c.n];
 }
 const IMG = key => `<img class="cimg" src="assets/cards/${key}.png" alt="" draggable="false" onload="this.closest('.card').classList.add('has-img')" onerror="this.remove()">`;
@@ -33,6 +35,13 @@ export function backHTML(cls = '', attrs = '') {
 }
 
 // ---------- 共通ヘルパ ----------
+const BOW_ID = CARDS.findIndex(c => c.kind === 'bow');
+/** 場に出ているボウ（表向き）。2枚目は上下をひっくり返して「)」に見せる */
+function bowsHTML(P, u) {
+  const n = P.bows[u] || 0; let h = '';
+  for (let i = 0; i < n; i++) h += cardHTML(BOW_ID, 'bowc' + (i % 2 ? ' flipbow' : ''));
+  return h;
+}
 const sortedHand = h => [...h].sort((a, b) => sortRank(a) - sortRank(b) || a - b);
 const nm = (P, u) => esc(P.names[u] || '???');
 export const modeOf = S => ((S.pub.bows[S.uid] || 0) >= 2 ? (S.mode || 'N') : 'N');
@@ -68,6 +77,11 @@ export function statusText(S) {
       if (T.stage === 'shuffle') return T.target === me ? `${nm(P, T.by)}にトレードを仕掛けられました！手札を並べ替えて「確定」を押してください` : (T.by === me ? `${nm(P, T.target)}が手札を並べ替えています…` : `${nm(P, T.by)}が${nm(P, T.target)}にトレードを仕掛けています`);
       return T.by === me ? `${nm(P, T.target)}の手札から引くカードを選んでください` : `${nm(P, T.by)}がカードを選んでいます…`;
     }
+    case 'devildiscard': {
+      const D = P.devilDisc; if (!D) return '';
+      return D.target === me ? 'デビルゼロを押し付けられました！手札から1枚捨ててください' : `${nm(P, D.target)}がデビルゼロを押し付けられ、1枚捨てます`;
+    }
+    case 'showdown': return 'キングから順に手札を公開します…';
     case 'cutin': return `${nm(P, P.king)} のアタック！`;
     case 'lastdraw':
       if (me === P.king) return 'ラストドロー中… 全員の準備を待っています';
@@ -119,19 +133,18 @@ function badges(S, u) {
   if (P.king === u) h += '<span class="bd king" title="キング">👑</span>';
   if (P.rebellion[u]) h += '<span class="bd reb" title="リベリオン">🚩</span>';
   if (P.devil.holder === u) h += '<span class="bd dh">🖐 デビルハンド</span>';
-  if ((P.bows[u] || 0) > 0) h += `<span class="bd bow">ボウ×${P.bows[u]}</span>`;
   if (P.step === 'lastdraw' && u !== P.king && P.confirmed[u]) h += '<span class="bd ok">✔</span>';
   return h;
 }
 function plate(S, u) {
   const P = S.pub;
-  const active = P.phase === 'duel' && ((['draw', 'act'].includes(P.step) && P.turn === u) || (P.step === 'trade' && P.trade && ((P.trade.stage === 'shuffle' ? P.trade.target : P.trade.by) === u)));
+  const active = P.phase === 'duel' && ((['draw', 'act'].includes(P.step) && P.turn === u) || (P.step === 'devildiscard' && P.devilDisc && P.devilDisc.target === u) || (P.step === 'trade' && P.trade && ((P.trade.stage === 'shuffle' ? P.trade.target : P.trade.by) === u)));
   return `<div class="plate ${active ? 'turn' : ''}"><span class="pname">${nm(P, u)}</span><span class="pscore">${P.scores[u]}</span></div><div class="badges">${badges(S, u)}</div>`;
 }
 function seatHTML(S, u, pos) {
   const P = S.pub; const n = P.handCounts[u] || 0; let backs = '';
   for (let i = 0; i < n; i++) backs += backHTML(P.devil.holder === u && P.devil.idx === i ? 'clip' : '', '');
-  return `<div class="seat seat-${pos}" data-uid="${esc(u)}">${plate(S, u)}<div class="rack">${backs}</div></div>`;
+  return `<div class="seat seat-${pos}" data-uid="${esc(u)}">${plate(S, u)}<div class="rack">${backs}</div><div class="bowrow">${bowsHTML(P, u)}</div></div>`;
 }
 function pilesHTML(S) {
   const P = S.pub; const layers = Math.max(1, Math.min(12, Math.ceil(P.deckCount / 4)));
@@ -180,8 +193,10 @@ export function controlsHTML(S) {
       <div class="robbar"><i style="animation-duration:${P.robMs}ms;animation-delay:-${el}ms"></i></div>`;
   } else if (P.step === 'trade' && P.trade && P.trade.stage === 'shuffle' && P.trade.target === me) {
     h += `<button class="btn gold pulse" data-act="tready" ${dis}>並べ替え完了（確定）</button>`;
+  } else if (P.step === 'devildiscard' && P.devilDisc && P.devilDisc.target === me) {
+    h += S.sel != null && my.includes(S.sel) && S.sel !== DEVIL_ID ? `<button class="btn red" data-act="devdiscard" ${dis}>この1枚を捨てる</button>` : '<span class="note">デビルゼロ以外から、捨てる1枚を選んでください</span>';
   } else if (P.step === 'lastdraw' && me !== P.king) {
-    if (!P.ldone[me]) h += S.sel != null && my.includes(S.sel) ? `<button class="btn gold" data-act="lastdiscard" ${dis}>この1枚を捨てる</button>` : '<span class="note">捨てる1枚を選んでください</span>';
+    if (!P.ldone[me]) h += S.sel === DEVIL_ID && P.devil.pushed ? '<span class="note">押し付けられたデビルゼロは捨てられません</span>' : S.sel != null && my.includes(S.sel) ? `<button class="btn gold" data-act="lastdiscard" ${dis}>この1枚を捨てる</button>` : '<span class="note">捨てる1枚を選んでください</span>';
     else if (!P.confirmed[me]) h += `<button class="btn gold pulse" data-act="lconfirm" ${dis}>確定（公開する）</button>`;
   }
   return (tools ? `<div class="tools">${tools}</div>` : '') + `<div class="btnrow">${h}</div>`;
@@ -207,37 +222,56 @@ export function gameHTML(S) {
   return `<div class="topbar"><span class="logo-s">Calcolon</span><span class="duel">DUEL ${P.duel}/${P.totalDuels}</span><span class="chips">${chips}</span><span class="room">${esc(S.code)}</span><button class="btn mini" data-act="leave">退出</button></div>
   <div class="scene"><div class="table">${pilesHTML(S)}</div>${seats}</div>
   <div class="logbox ${S.logOpen ? 'open' : ''}" data-act="log">${logs}</div>
-  <div class="me" data-uid="${esc(me)}"><div class="statusline">${statusText(S)}</div>${plate(S, me)}<div class="ctl">${controlsHTML(S)}</div><div class="hand">${handRowHTML(S)}</div><div class="rackbar"></div></div>
-  ${(P.step === 'reveal' || P.phase === 'end') ? resultHTML(S) : ''}`;
+  <div class="me" data-uid="${esc(me)}"><div class="statusline">${statusText(S)}</div>${plate(S, me)}<div class="ctl">${controlsHTML(S)}</div><div class="hand">${handRowHTML(S)}</div><div class="rackbar"></div><div class="bowfield">${bowsHTML(P, me)}</div></div>
+  ${(P.step === 'showdown' || P.step === 'reveal' || P.phase === 'end') ? resultHTML(S) : ''}`;
 }
 
-// ---------- 結果 ----------
+// ---------- 手札公開（ショーダウン）と結果 ----------
 const STATUS = { win: ['勝利', 'st-win'], complete: ['コンプリート（0点）', 'st-comp'], kingkill: ['キングキリング', 'st-kk'], burst: ['バースト', 'st-burst'], devilburst: ['デビルバースト', 'st-db'] };
+function formulaCards(ids, mode, anim, ri) {
+  const L = mode === 'L', Rr = mode === 'R'; let cs = '';
+  ids.forEach((id, i) => {
+    if (ids.length === 5 && ((L && i === 0) || (Rr && i === 2))) cs += '<span class="paren s">(</span>';
+    cs += cardHTML(id, anim, `style="--d:${(i * 0.12).toFixed(2)}s"`);
+    if (ids.length === 5 && ((L && i === 2) || (Rr && i === 4))) cs += '<span class="paren s">)</span>';
+  });
+  return cs;
+}
 export function resultHTML(S) {
   const P = S.pub, R = P.result, isHost = P.hostUid === S.uid;
-  if (!R) return '';
   if (P.phase === 'end') {
+    if (!R) return '';
     const rank = [...P.order].sort((a, b) => P.scores[b] - P.scores[a]);
     const rows = rank.map((u, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="rk">${i + 1}</span><span class="rn">${nm(P, u)}</span><span class="rs">${P.scores[u]}</span></li>`).join('');
     return `<div class="result end"><div class="rbox"><h2>FINAL RESULT</h2><ol class="rank">${rows}</ol>
       <div class="btnrow">${isHost ? '<button class="btn gold" data-act="rematch">もう一度遊ぶ</button>' : '<span class="note">ホストが再戦を選べます</span>'}<button class="btn ghost" data-act="leave">退出</button></div></div></div>`;
   }
-  const rows = P.order.map((u, ri) => {
-    const r = R.per[u]; const ids = r.ids.length === 5 ? r.ids : (r.hand || []);
-    const L = r.mode === 'L', Rr = r.mode === 'R';
-    let cs = ''; ids.forEach((id, i) => {
-      if (ids.length === 5 && ((L && i === 0) || (Rr && i === 2))) cs += '<span class="paren s">(</span>';
-      cs += cardHTML(id, 'flip', `style="--d:${(ri * 0.35 + i * 0.12).toFixed(2)}s"`);
-      if (ids.length === 5 && ((L && i === 2) || (Rr && i === 4))) cs += '<span class="paren s">)</span>';
-    });
-    const [lab, cl] = STATUS[r.status];
+  const final = P.step === 'reveal' && R;
+  const list = P.show && P.show.list && P.show.list.length ? P.show.list : P.order;
+  const rows = list.map(u => {
+    const info = final ? R.per[u] : P.shownInfo[u];
+    const who = `${P.king === u ? '👑 ' : ''}${nm(P, u)}`;
+    if (!info) {
+      let backs = ''; for (let i = 0; i < (P.handCounts[u] || 0); i++) backs += backHTML('', '');
+      return `<div class="rrow waiting"><div class="rwho">${who}</div><div class="rcards">${backs}</div><div class="rinfo"><div class="rform muted">…</div></div></div>`;
+    }
+    const anim = S.revSeen && S.revSeen.has(P.duel + ':' + u) ? 'static' : 'flip';
+    const ids = info.ids.length === 5 ? info.ids : info.hand;
+    const cs = formulaCards(ids, info.mode, anim);
+    const bowTxt = info.bows ? `<small>ボウ×${info.bows}</small>` : '';
+    const burst = info.value == null;
+    if (!final) {
+      const stamp = burst ? `<div class="rstamp ${info.devil ? 'dev' : ''} ${anim}">${info.devil ? 'DEVIL BURST' : 'BURST'}</div>` : `<div class="rval ${anim}">${info.value}<small>点</small></div>`;
+      return `<div class="rrow shown ${burst ? 'isburst' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div><div class="rinfo"><div class="rform">${burst ? '式を作れず' : esc(info.text) + ' ＝ ' + info.value}</div>${stamp}</div></div>`;
+    }
+    const [lab, cl] = STATUS[info.status];
     const win = R.winners.includes(u);
-    return `<div class="rrow ${win ? 'winner' : ''}"><div class="rwho">${P.king === u ? '👑 ' : ''}${nm(P, u)}${r.bows ? `<small>ボウ×${r.bows}</small>` : ''}</div>
-      <div class="rcards">${cs}</div>
-      <div class="rinfo"><div class="rform">${r.value != null ? esc(r.text) + ' ＝ ' + r.value : '式を作れず'}</div><div class="rst ${cl}">${lab}</div>
-      <div class="rdelta ${r.delta < 0 ? 'neg' : ''}">${r.delta > 0 ? '+' : ''}${r.delta}<small>計 ${r.total}</small></div></div></div>`;
+    return `<div class="rrow ${win ? 'winner' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div>
+      <div class="rinfo"><div class="rform">${burst ? '式を作れず' : esc(info.text) + ' ＝ ' + info.value}</div><div class="rst ${cl}">${lab}${info.rebellion ? ' ・次回リベリオン🚩' : ''}</div>
+      <div class="rdelta ${info.delta < 0 ? 'neg' : ''}">${info.delta > 0 ? '+' : ''}${info.delta}<small>計 ${info.total}</small></div></div></div>`;
   }).join('');
-  return `<div class="result"><div class="rbox"><h2>DUEL ${P.duel} RESULT</h2>${rows}<div class="btnrow">${isHost ? `<button class="btn gold" data-act="next">${P.duel >= P.totalDuels ? '最終結果へ' : '次のデュエルへ'}</button>` : '<span class="note">ホストが進めるのを待っています…</span>'}</div></div></div>`;
+  const btn = final ? `<div class="btnrow">${isHost ? `<button class="btn gold" data-act="next">${P.duel >= P.totalDuels ? '最終結果へ' : '次のデュエルへ'}</button>` : '<span class="note">ホストが進めるのを待っています…</span>'}</div>` : '';
+  return `<div class="result ${final ? '' : 'showdown'}"><div class="rbox"><h2>${final ? 'DUEL ' + P.duel + ' RESULT' : 'SHOWDOWN'}</h2>${rows}${btn}</div></div>`;
 }
 
 // ---------- モーダル ----------

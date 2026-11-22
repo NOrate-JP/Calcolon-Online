@@ -215,8 +215,7 @@ button{font:inherit}
 .mcards .card[data-act]{cursor:pointer}
 
 /* 山札からのドロー（飛ぶカード） */
-.flyer{position:fixed;left:0;top:0;width:56px;height:56px;z-index:70;pointer-events:none;will-change:transform}
-.flyer .card{--cw:56px}
+.flyer{position:fixed;left:0;top:0;z-index:70;pointer-events:none;will-change:transform,opacity}
 
 /* アタックのカットイン */
 .cutin{position:absolute;inset:0;overflow:hidden;animation:cutbg var(--ms,2600ms) linear forwards;background:radial-gradient(ellipse at 50% 50%,#0000 20%,#000c 90%)}
@@ -232,3 +231,30 @@ button{font:inherit}
 @keyframes txtin{from{opacity:0;transform:skewY(6deg) scale(2.8)}to{opacity:1;transform:skewY(6deg) scale(1)}}
 @keyframes whoin{from{opacity:0;transform:skewY(6deg) translateY(14px)}to{opacity:1;transform:skewY(6deg)}}
 @keyframes slash{to{transform:rotate(-8deg) scaleX(1)}}
+
+/* ボウ（場に表向きで公開。2枚目は上下反転して「)」に） */
+.bowfield{position:absolute;right:12px;bottom:10px;display:flex;align-items:flex-end;z-index:7;pointer-events:none}
+.bowfield .card,.bowrow .card{--cw:clamp(44px,6.2vw,68px);margin-left:-14px}
+.bowfield .card:first-child,.bowrow .card:first-child{margin-left:0}
+.bowrow{display:flex;justify-content:center;min-height:0}
+.bowrow .card{--cw:clamp(26px,3.6vw,40px);margin-left:-8px}
+.card.flipbow{transform:rotate(180deg)}
+.k-bow .cmain{font-size:calc(var(--cw)*.7)}
+.card.dragging{opacity:.35}
+
+/* 手札公開（ショーダウン） */
+.result.showdown{background:#000a;backdrop-filter:none}
+.rrow.waiting{opacity:.55}
+.rrow.shown .rinfo{align-items:flex-start}
+.rval{font-family:var(--fnum);font-weight:900;font-size:34px;color:#ffe08a;text-shadow:0 0 14px #c3182c}
+.rval small{font-size:14px;margin-left:4px}
+.rval.flip{animation:valpop .6s .7s both}
+.rstamp{display:inline-block;font-family:var(--fgothic);font-size:34px;line-height:1;color:#9ab4ff;border:3px solid #9ab4ff;padding:2px 14px;transform:rotate(-6deg);text-shadow:0 0 12px #3a5aff}
+.rstamp.dev{color:#ff4a5a;border-color:#ff4a5a;text-shadow:0 0 14px #f00}
+.rstamp.flip{animation:stamp .5s .7s cubic-bezier(.2,.9,.3,1.4) both}
+.card.static{animation:none}
+@keyframes valpop{from{opacity:0;transform:scale(2.2)}to{opacity:1;transform:scale(1)}}
+@keyframes stamp{from{opacity:0;transform:rotate(-6deg) scale(3)}to{opacity:1;transform:rotate(-6deg) scale(1)}}
+@media (max-width:760px){
+  .bowfield{bottom:calc(clamp(46px,15.5vw,92px) + 50px);right:6px}
+}

@@ -131,7 +131,7 @@ const sameSet = (a, b) => a.length === b.length && [...a].sort((x, y) => x - y).
 export function createGame(hostUid, uids, names, opts = {}) {
   const G = {
     hostUid, order: uids.slice(), names: { ...names }, cpu: { ...(opts.cpu || {}) }, totalDuels: opts.totalDuels || 5, robMs: opts.robMs ?? 3500, cutMs: opts.cutMs ?? 2600,
-    duel: 0, scores: {}, nextRebellion: {}, log: [], events: [], evSeq: 0, robSeq: 0, cutSeq: 0, rev: 0, lastWinner: null, phase: 'duel'
+    duel: 0, scores: {}, nextRebellion: {}, log: [], events: [], evSeq: 0, robSeq: 0, cutSeq: 0, showSeq: 0, rev: 0, lastWinner: null, phase: 'duel'
   };
   uids.forEach(u => { G.scores[u] = 0; });
   startDuel(G, uids[rnd(uids.length)]);
@@ -141,7 +141,8 @@ export function createGame(hostUid, uids, names, opts = {}) {
 export function hydrate(G) {
   G.deck = G.deck || []; G.discard = G.discard || []; G.log = G.log || []; G.events = G.events || [];
   G.robReq = G.robReq || []; G.ldone = G.ldone || {}; G.confirmed = G.confirmed || {}; G.arr = G.arr || {};
-  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600;
+  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600; G.showSeq = G.showSeq || 0;
+  if (G.show) G.show.shown = G.show.shown || [];
   G.rebellion = G.rebellion || {}; G.bows = G.bows || {}; G.bowIds = G.bowIds || {}; G.hands = G.hands || {};
   G.order.forEach(u => { G.hands[u] = G.hands[u] || []; G.bowIds[u] = G.bowIds[u] || []; G.bows[u] = G.bowIds[u].length; });
   G.devil = G.devil || { holder: null, pushed: false };
@@ -156,7 +157,7 @@ export function startDuel(G, firstUid) {
   G.order.forEach(u => { G.hands[u] = []; G.bows[u] = 0; G.bowIds[u] = []; G.rebellion[u] = !!G.nextRebellion[u]; });
   for (let i = 0; i < 4; i++) G.order.forEach(u => G.hands[u].push(G.deck.pop()));
   G.nextRebellion = {}; G.king = null; G.step = 'draw'; G.turn = firstUid;
-  G.lastDiscard = null; G.robReq = []; G.ldone = {}; G.confirmed = {}; G.arr = {}; G.trade = null; G.cutKind = null;
+  G.lastDiscard = null; G.robReq = []; G.ldone = {}; G.confirmed = {}; G.arr = {}; G.trade = null; G.cutKind = null; G.show = null; G.devilDisc = null;
   G.result = null; G.skipNext = false;
   tidy(G);
   const rebs = G.order.filter(u => G.rebellion[u]).map(u => nm(G, u));
@@ -177,7 +178,7 @@ const rm = (arr, id) => { const i = arr.indexOf(id); if (i >= 0) arr.splice(i, 1
 function endTurn(G) {
   let k = 1;
   if (G.skipNext) { k = 2; G.skipNext = false; ev(G, 'skip', `${nm(G, nextOf(G, G.turn, 1))}はスキップ！`); }
-  G.turn = nextOf(G, G.turn, k); G.step = 'draw'; G.lastDiscard = null; G.trade = null;
+  G.turn = nextOf(G, G.turn, k); G.step = 'draw'; G.lastDiscard = null; G.trade = null; G.devilDisc = null;
 }
 
 function doAttack(G, uid, viaRob) {
@@ -203,10 +204,10 @@ export function finishCutin(G) {
   return true;
 }
 function maybeReveal(G) {
-  if (G.order.every(u => (u === G.king || G.ldone[u]) && G.confirmed[u])) revealAll(G);
+  if (G.order.every(u => (u === G.king || G.ldone[u]) && G.confirmed[u])) startShowdown(G);
 }
 
-function revealAll(G) {
+function startShowdown(G) {
   const per = {}; const comp = [];
   G.order.forEach(u => {
     const a = G.arr[u];
@@ -223,19 +224,34 @@ function revealAll(G) {
     else if (r.value != null) { if (u === G.king) { r.status = 'kingkill'; r.delta = -30; } else { r.status = 'complete'; r.delta = 0; } }
     else if (r.hasDevil) { r.status = 'devilburst'; r.delta = -100; }
     else { r.status = 'burst'; r.delta = -10; }
-    G.scores[u] += r.delta;
-    r.total = G.scores[u];
-    if (r.status === 'win' && r.hasDevil) { G.nextRebellion[u] = true; r.rebellion = true; }
+    r.total = G.scores[u] + r.delta;
+    if (r.status === 'win' && r.hasDevil) r.rebellion = true;
   });
   G.result = { per, winners, king: G.king, max };
-  G.lastWinner = winners[0];
-  G.step = 'reveal';
+  const list = [G.king]; for (let k = 1; k < G.order.length; k++) list.push(nextOf(G, G.king, k));
+  G.show = { list, shown: [] }; G.step = 'showdown'; G.showSeq++;
+  ev(G, 'showdown', 'キングから順に手札を公開します！');
+}
+/** 手札公開を1人ぶん進める。全員公開したあとはリザルトへ（ホストのタイマーから呼ぶ） */
+export function advanceShowdown(G) {
+  if (G.phase !== 'duel' || G.step !== 'showdown') return false;
+  const sh = G.show;
+  if (sh.shown.length < sh.list.length) {
+    const u = sh.list[sh.shown.length]; sh.shown.push(u); G.showSeq++;
+    const r = G.result.per[u];
+    if (r.value == null) ev(G, r.hasDevil ? 'devilburst' : 'burst', `${nm(G, u)}は式を作れず${r.hasDevil ? 'デビルバースト！' : 'バースト…'}`, u);
+    else say(G, `${nm(G, u)}の手札 ＝ ${r.value}`);
+  } else finalizeShowdown(G);
+  G.rev++;
+  return true;
+}
+function finalizeShowdown(G) {
+  const { per, winners, max } = G.result;
+  G.order.forEach(u => { G.scores[u] += per[u].delta; per[u].total = G.scores[u]; if (per[u].rebellion) G.nextRebellion[u] = true; });
+  G.lastWinner = winners[0]; G.step = 'reveal';
   ev(G, 'reveal', `結果発表！ 勝者: ${winners.map(u => nm(G, u)).join('、')}（${max}点）`);
   G.order.forEach(u => {
-    const s = per[u].status;
-    if (s === 'kingkill') ev(G, 'kingkill', `${nm(G, u)}はキングキリング！ -30点`, u);
-    if (s === 'burst') ev(G, 'burst', `${nm(G, u)}はバースト… -10点`, u);
-    if (s === 'devilburst') ev(G, 'devilburst', `${nm(G, u)}はデビルバースト！！ -100点`, u);
+    if (per[u].status === 'kingkill') ev(G, 'kingkill', `${nm(G, u)}はキングキリング！ -30点`, u);
     if (per[u].rebellion) ev(G, 'reb', `${nm(G, u)}は次のデュエルでリベリオン！`, u);
   });
 }
@@ -310,6 +326,14 @@ function reduceInner(G, a, uid, mine) {
       G.hands[uid] = a.order.slice(); G.arr[uid] = { ids: sol.ids, mode: sol.mode };
       doAttack(G, uid, false); return OK;
     }
+    case 'devilDiscard': {
+      const D = G.devilDisc;
+      if (G.step !== 'devildiscard' || !D || D.target !== uid) return ERR('今は捨てられません');
+      if (!mine.includes(a.cardId) || a.cardId === DEVIL_ID) return ERR('そのカードは捨てられません');
+      rm(mine, a.cardId); G.discard.push(a.cardId);
+      say(G, `${nm(G, uid)}は押し付けられて1枚捨てた`);
+      endTurn(G); return OK;
+    }
     case 'discard': return discardAct(G, a, uid, mine);
     case 'rob': {
       if (G.phase !== 'duel' || G.step !== 'rob') return ERR('ロブできません');
@@ -320,6 +344,7 @@ function reduceInner(G, a, uid, mine) {
     case 'lastDiscard': {
       if (G.phase !== 'duel' || G.step !== 'lastdraw' || uid === G.king || G.ldone[uid]) return ERR('今は捨てられません');
       if (!mine.includes(a.cardId)) return ERR('カードが不正です');
+      if (a.cardId === DEVIL_ID && G.devil.pushed) return ERR('押し付けられたデビルゼロは捨てられません');
       rm(mine, a.cardId); G.discard.push(a.cardId); G.ldone[uid] = true;
       say(G, `${nm(G, uid)}が1枚捨てた`);
       return OK;
@@ -359,7 +384,7 @@ function discardAct(G, a, uid, mine) {
     if (a.effect !== 'push' || !validTarget(a.target) || G.rebellion[a.target]) return ERR('押し付ける相手を選んでください');
     rm(mine, id); G.hands[a.target].push(id); G.devil = { holder: a.target, pushed: true };
     ev(G, 'devil', `${me}がデビルゼロを${nm(G, a.target)}に押し付けた！`, a.target);
-    endTurn(G); return OK;
+    G.devilDisc = { target: a.target, by: uid }; G.step = 'devildiscard'; return OK;
   }
   // --- ボウ ---
   if (def.kind === 'bow') {
@@ -421,13 +446,15 @@ export function closeRob(G) {
 export function publicView(G) {
   const handCounts = {}; G.order.forEach(u => { handCounts[u] = G.hands[u].length; });
   const dv = G.devil, shown = dv.pushed && dv.holder;
+  const shownInfo = {};
+  if (G.show && G.result) G.show.shown.forEach(u => { const r = G.result.per[u]; shownInfo[u] = { hand: r.hand, ids: r.ids, text: r.text, value: r.value, mode: r.mode, bows: r.bows, devil: r.hasDevil }; });
   return {
     phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
     turn: G.turn, step: G.step, deckCount: G.deck.length, discardCount: G.discard.length, discardTop: G.discard.slice(-3),
     lastDiscard: G.lastDiscard || null, handCounts, bows: G.bows,
     devil: { holder: shown ? dv.holder : null, pushed: !!dv.pushed, idx: shown ? G.hands[dv.holder].indexOf(DEVIL_ID) : -1 },
     rebellion: G.rebellion, scores: G.scores, king: G.king || null, ldone: G.ldone || {}, confirmed: G.confirmed || {},
-    trade: G.trade || null, robSeq: G.robSeq, robMs: G.robMs, cutSeq: G.cutSeq, cutMs: G.cutMs, cutKind: G.cutKind || null,
+    trade: G.trade || null, devilDisc: G.devilDisc || null, show: G.show ? { list: G.show.list, shown: G.show.shown } : null, shownInfo, showSeq: G.showSeq, robSeq: G.robSeq, robMs: G.robMs, cutSeq: G.cutSeq, cutMs: G.cutMs, cutKind: G.cutKind || null,
     skipNext: !!G.skipNext, log: G.log.slice(-40), events: G.events.slice(-8),
     result: (G.step === 'reveal' || G.phase === 'end') ? G.result : null, rev: G.rev
   };

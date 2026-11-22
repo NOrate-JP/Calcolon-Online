@@ -49,6 +49,12 @@ export function cpuAction(G, u) {
       const d = CARDS[bestId];
       return { t: 'discard', uid: u, cardId: bestId, effect: d.kind === 'num' && d.val === '0' && Math.random() < 0.3 ? 'skip' : undefined };
     }
+    case 'devildiscard': {
+      if (!G.devilDisc || G.devilDisc.target !== u) return null;
+      let best = null, bs = -1;
+      for (const c of hand) { if (c === DEVIL_ID) continue; const sc = potential(hand.filter(x => x !== c), bows, reb) + Math.random() * 0.2; if (sc > bs) { bs = sc; best = c; } }
+      return best == null ? null : { t: 'devilDiscard', uid: u, cardId: best };
+    }
     case 'rob': {
       if (!G.lastDiscard || G.lastDiscard.by === u || G.robReq.includes(u)) return null;
       return solveBest([...hand, G.lastDiscard.id], bows, reb) ? { t: 'rob', uid: u } : null;
@@ -67,9 +73,10 @@ export function cpuAction(G, u) {
       if (u === G.king) return null;
       if (!G.ldone[u]) {
         let best = null, bv = -1;
-        for (const c of hand) { const r = solveBest(hand.filter(x => x !== c), bows, reb); if (r && r.value > bv) { bv = r.value; best = c; } }
+        const ok = hand.filter(c => !(c === DEVIL_ID && G.devil.pushed));   // 押し付けられたデビルゼロは捨てられない
+        for (const c of ok) { const r = solveBest(hand.filter(x => x !== c), bows, reb); if (r && r.value > bv) { bv = r.value; best = c; } }
         if (best == null) {
-          best = hand.includes(DEVIL_ID) ? DEVIL_ID : (hand.find(i => ['bow', 'trade'].includes(CARDS[i].kind)) ?? pick(hand));
+          best = ok.includes(DEVIL_ID) ? DEVIL_ID : (ok.find(i => ['bow', 'trade'].includes(CARDS[i].kind)) ?? pick(ok));
         }
         return { t: 'lastDiscard', uid: u, cardId: best };
       }

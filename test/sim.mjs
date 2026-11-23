@@ -82,3 +82,13 @@ for (let g = 0; g < (FINAL ? 40 : 300); g++) {
   stat.games++;
 }
 console.log(stat, 'OK');
+{ // 最終デュエルは減点も2倍
+  const uids = ['a','b']; const G = createGame('a', uids, { a:'a', b:'b' }, { totalDuels: 1, robMs: 0, cpu: { a: true, b: true } });
+  let guard = 0; while (G.step !== 'reveal' && guard++ < 3000) {
+    if (G.step === 'cutin') { finishCutin(G); continue; } if (G.step === 'showdown') { advanceShowdown(G); continue; }
+    let acted = false; for (const u of uids) { const a = cpuAction(G, u); if (a) { reduce(G, a); acted = true; break; } } if (!acted) closeRob(G);
+  }
+  Object.values(G.result.per).forEach(r => { if (r.status === 'burst') assert.equal(r.delta, -20); if (r.status === 'kingkill') assert.equal(r.delta, -60); if (r.status === 'devilburst') assert.equal(r.delta, -200); if (r.status === 'win') assert.ok(r.delta >= 0); });
+  assert.ok(Array.isArray(G.hist.a) && G.hist.a.length === 1);
+  console.log('final-double ok');
+}

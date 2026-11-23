@@ -1,17 +1,20 @@
 import * as FB from './fb.js';
 import { Host } from './host.js';
 import { CARDS, DEVIL_ID } from './engine.js';
-import { titleHTML, setupHTML, lobbyHTML, gameHTML, modalHTML, canDiscard, modeOf, tradeNFor, normPub, backHTML, esc } from './views.js';
+import { titleHTML, setupHTML, lobbyHTML, gameHTML, modalHTML, modeOf, tradeNFor, normPub, backHTML, preloadCardImages, esc } from './views.js';
 
 const $ = s => document.querySelector(s);
 const S = {
   uid: null, name: localStorage.getItem('calc_name') || '', code: null, meta: null, players: {}, pub: null, hand: [], order: [], mode: 'N',
   host: null, unsubs: [], sel: null, modal: null, tsel: { give: [], take: [] }, tkey: '', seenEv: -1, prevHand: null, prevTop: null,
-  robSeen: -1, robStart: 0, robbed: -1, cutSeen: -1, lockRev: null, logOpen: false, bannerAt: 0, drag: null, flyQ: [], flip: false, revSeen: new Set()
+  robSeen: -1, robStart: 0, robbed: -1, cutSeen: -1, lockRev: null, logOpen: false, bannerAt: 0, drag: null, flyQ: [], flip: false, revSeen: new Set(), imgsReady: false,
+  opts: Object.assign({ waits: false, current: false }, JSON.parse(localStorage.getItem('calc_opts') || '{}'))
 };
 
 // ---------- 起動 ----------
 async function boot() {
+  // カード画像を最初に全部読み込んでおく（対戦中に仮カードが一瞬出ないように）
+  Promise.race([preloadCardImages(), new Promise(r => setTimeout(r, 8000))]).then(() => { S.imgsReady = true; render(); });
   if (!FB.configured) { $('#app').innerHTML = setupHTML(); return; }
   FB.onAuthStateChanged(FB.auth, async u => {
     if (!u) return;
@@ -180,10 +183,11 @@ function render() {
   const m = S.meta; if (!m) return;
   if (m.status === 'lobby' || !S.pub) {
     const keep = document.activeElement && document.activeElement.id;
-    app.className = ''; app.innerHTML = lobbyHTML(S); $('#modal').innerHTML = '';
+    app.className = ''; app.innerHTML = lobbyHTML(S); $('#modal').innerHTML = S.modal && S.modal.type === 'settings' ? modalHTML(S) : '';
     if (keep && $('#' + keep)) $('#' + keep).focus();
     return;
   }
+  if (!S.imgsReady) { app.className = ''; app.innerHTML = '<div class="loading">カード画像を読み込み中…</div>'; return; }
   syncOrder();
   const before = S.flip ? captureHand() : null; S.flip = false;
   app.className = 'ingame';
@@ -251,6 +255,8 @@ function act(name, el) {
     case 'tgive': toggle(S.tsel.give, +el.dataset.id, tradeN()); return render();
     case 'ttake': toggle(S.tsel.take, +el.dataset.i, tradeN()); return render();
     case 'tgo': send({ t: 'tradePick', give: S.tsel.give.slice(), take: S.tsel.take.slice() }); S.tsel = { give: [], take: [] }; return;
+    case 'scores': S.modal = { type: 'scores' }; return render();
+    case 'settings': S.modal = { type: 'settings' }; return render();
     case 'next': return send({ t: 'next' });
     case 'rematch': return send({ t: 'rematch' });
     case 'log': S.logOpen = !S.logOpen; return render();
@@ -264,27 +270,38 @@ document.addEventListener('click', e => {
   const h = e.target.closest('.hand .card');
   if (h && S.pub) { const id = +h.dataset.id; S.sel = S.sel === id ? null : id; render(); }
 });
-// 手札のドラッグ並べ替え（PC）。スマホは ◀ ▶ ボタンで並べ替え
+// 手札のドラッグ並べ替え（PC）。ドラッグ中にカードがリアルタイムで入れ替わる。スマホは ◀ ▶ ボタンで並べ替え
 document.addEventListener('dragstart', e => {
   const c = e.target.closest && e.target.closest('.hand .card'); if (!c) return;
   S.drag = +c.dataset.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(S.drag));
   setTimeout(() => c.classList.add('dragging'), 0);
 });
-document.addEventListener('dragover', e => { if (S.drag != null && e.target.closest && e.target.closest('.hand')) e.preventDefault(); });
-document.addEventListener('drop', e => {
+document.addEventListener('dragover', e => {
   if (S.drag == null) return;
-  const hand = e.target.closest && e.target.closest('.hand'); if (!hand) { S.drag = null; return; }
+  const hand = e.target.closest && e.target.closest('.hand'); if (!hand) return;
   e.preventDefault();
-  const t = e.target.closest('.hand .card'), o = S.order, from = o.indexOf(S.drag);
-  if (from >= 0) {
-    const ti = t ? o.indexOf(+t.dataset.id) : -1;
-    o.splice(from, 1);
-    if (t && ti >= 0 && +t.dataset.id !== S.drag) o.splice(ti, 0, S.drag); else o.push(S.drag);
-  }
-  S.drag = null; S.sel = null; S.flip = true; render();
+  const t = e.target.closest('.hand .card'); if (!t) return;
+  const tid = +t.dataset.id; if (tid === S.drag) return;
+  const o = S.order, from = o.indexOf(S.drag), to = o.indexOf(tid); if (from < 0 || to < 0) return;
+  const cards = [...hand.querySelectorAll('.card')];
+  const before = new Map(cards.map(c => [c, c.getBoundingClientRect().left]));
+  o.splice(from, 1); o.splice(to, 0, S.drag);
+  const el = hand.querySelector(`.card[data-id="${S.drag}"]`); if (!el) return;
+  if (from < to) t.after(el); else t.before(el);
+  cards.forEach(c => {
+    if (c === el) return;
+    const dx = before.get(c) - c.getBoundingClientRect().left;
+    if (Math.abs(dx) > 1) c.animate([{ transform: `translateX(${dx}px)` }, { transform: 'translateX(0)' }], { duration: 180, easing: 'ease-out' });
+  });
 });
-document.addEventListener('dragend', () => { S.drag = null; document.querySelectorAll('.dragging').forEach(c => c.classList.remove('dragging')); });
+document.addEventListener('drop', e => { if (S.drag != null) e.preventDefault(); });
+document.addEventListener('dragend', () => {
+  const was = S.drag != null; S.drag = null; S.sel = null;
+  document.querySelectorAll('.dragging').forEach(c => c.classList.remove('dragging'));
+  if (was) render();
+});
 document.addEventListener('change', e => {
+  if (e.target.dataset && e.target.dataset.opt) { S.opts[e.target.dataset.opt] = e.target.checked; localStorage.setItem('calc_opts', JSON.stringify(S.opts)); render(); return; }
   if (!S.meta || S.meta.hostUid !== S.uid) return;
   if (e.target.id === 'sel-duels') FB.update(FB.ref(FB.db, `rooms/${S.code}/meta`), { totalDuels: +e.target.value });
   if (e.target.id === 'sel-final') FB.update(FB.ref(FB.db, `rooms/${S.code}/meta`), { finalRule: e.target.value === '1' });

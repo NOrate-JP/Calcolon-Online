@@ -267,3 +267,24 @@ button{font:inherit}
 .hand.n7 .card,.hand.n8 .card{margin:0 1px}
 .rnote{font-size:12px;color:#ffd86b;margin-top:2px}
 .rcards{flex-wrap:wrap}
+
+/* 初心者向け表示・点数表・読み込み */
+.loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--gold);letter-spacing:.1em}
+.waits,.cur{font-size:13px;padding:3px 12px;border-radius:2px;background:#0a1c2ecc;border:1px solid #6fa8dc88;color:#cfe6ff;max-width:94vw;text-align:center}
+.cur{background:#241a08cc;border-color:#d9bd7288;color:#ffe9b0}
+.cur.ok{background:#0a2a14cc;border-color:#4cc56a88;color:#cfeccf}
+.chk{display:flex;gap:10px;align-items:flex-start;text-align:left;margin:10px 0;cursor:pointer}
+.chk input{width:20px;height:20px;margin-top:3px;accent-color:#d9bd72}
+.chk span{display:flex;flex-direction:column;font-size:15px}.chk small{color:#b9a77a;font-size:12px}
+.stab{width:100%;border-collapse:separate;border-spacing:3px;font-family:var(--fnum);margin:8px 0}
+.stab th,.stab td{background:#5a1a1f;padding:10px 6px;text-align:center;position:relative;font-size:20px;color:#fff;min-width:54px}
+.stab thead th{background:#12050a;color:#ff4a4a;font-size:20px}
+.stab thead th.tt{background:#3a3acb;color:#ff5a5a}
+.stab .corner{font-size:11px;line-height:1.1;text-align:left;color:#ff6a6a}
+.stab th.pl{background:#1a0a0e;font-size:14px;color:#f2e7c9;min-width:90px;font-family:var(--fjp)}
+.stab td.tot{background:#3a3acb;font-weight:900}
+.stab td.neg{color:#ffd0d0}
+.stab small.x2{position:absolute;right:4px;bottom:1px;font-size:11px;color:#ffe08a}
+.stab .dg{display:block;position:relative;height:38px;min-width:64px;background:linear-gradient(to bottom right,transparent calc(50% - 1px),#fff 50%,transparent calc(50% + 1px))}
+.stab .dg i{position:absolute;left:2px;top:0;font-style:normal}
+.stab .dg b{position:absolute;right:2px;bottom:0;font-weight:700}

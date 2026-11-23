@@ -1,5 +1,5 @@
 // 画面のHTML文字列を作る関数群（DOM/Firebase非依存）
-import { CARDS, DEVIL_ID, cardKey, keyLabel, sortRank, solveBest, evalOrdered, spanOf, modesFor, FLAME_KEYS, OP_SYM, OP_JP } from './engine.js';
+import { CARDS, DEVIL_ID, cardKey, cardLabel, keyLabel, sortRank, solveBest, evalOrdered, calcOrdered, spanOf, modesFor, FLAME_KEYS, OP_SYM, OP_JP } from './engine.js';
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -10,7 +10,7 @@ export function normPub(P) {
   P.log = P.log || []; P.events = P.events || []; P.discardTop = P.discardTop || [];
   P.devil = P.devil || { holder: null, pushed: false, idx: -1 };
   P.rebellion = P.rebellion || {}; P.bows = P.bows || {}; P.handCounts = P.handCounts || {}; P.scores = P.scores || {};
-  P.order = P.order || []; P.names = P.names || {}; P.shownInfo = P.shownInfo || {}; P.formulaLen = P.formulaLen || 5;
+  P.order = P.order || []; P.names = P.names || {}; P.shownInfo = P.shownInfo || {}; P.formulaLen = P.formulaLen || 5; P.hist = P.hist || {};
   if (P.show) P.show.shown = P.show.shown || [];
   Object.values(P.shownInfo).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
   if (P.result && P.result.per) Object.values(P.result.per).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
@@ -25,13 +25,24 @@ function faceParts(id) {
   if (c.kind === 'bow') return ['(', 'ボウ'];
   return ['⇄', 'トレード' + c.n];
 }
-const IMG = key => `<img class="cimg" src="assets/cards/${key}.png" alt="" draggable="false" onload="this.closest('.card').classList.add('has-img')" onerror="this.remove()">`;
+export const imgState = {};   // key -> true(あり) / false(なし)
+const keepImgs = [];
+export const IMG_KEYS = ['n0','n1','n2','n3','n4','n5','n6','n7','n8','n9','tenth','devil','sword','arrow','flame','halberd','shield','bow','trade1','trade2','back'];
+export function preloadCardImages() {
+  return Promise.all(IMG_KEYS.map(k => new Promise(res => {
+    const im = new Image(); im.onload = () => { imgState[k] = true; res(); }; im.onerror = () => { imgState[k] = false; res(); };
+    im.src = `assets/cards/${k}.png`; keepImgs.push(im);
+  })));
+}
+const IMG = key => imgState[key] === false ? '' :
+  `<img class="cimg" src="assets/cards/${key}.png" alt="" draggable="false" decoding="sync" ${imgState[key] === true ? '' : `onload="this.closest('.card').classList.add('has-img')"`} onerror="this.remove()">`;
+const pre = key => imgState[key] === true ? ' has-img' : '';
 export function cardHTML(id, cls = '', attrs = '') {
   const key = cardKey(id); const [m, s] = faceParts(id);
-  return `<div class="card k-${key} ${cls}" data-id="${id}" ${attrs}><div class="cface"><span class="clogo">Calcolon</span><span class="cmain">${esc(m)}</span><span class="csub">${esc(s)}</span></div>${IMG(key)}</div>`;
+  return `<div class="card k-${key}${pre(key)} ${cls}" data-id="${id}" ${attrs}><div class="cface"><span class="clogo">Calcolon</span><span class="cmain">${esc(m)}</span><span class="csub">${esc(s)}</span></div>${IMG(key)}</div>`;
 }
 export function backHTML(cls = '', attrs = '') {
-  return `<div class="card back ${cls}" ${attrs}><div class="cface"><span class="clogo">Calcolon</span><span class="bsig">✠</span></div>${IMG('back')}</div>`;
+  return `<div class="card back${pre('back')} ${cls}" ${attrs}><div class="cface"><span class="clogo">Calcolon</span><span class="bsig">✠</span></div>${IMG('back')}</div>`;
 }
 
 // ---------- 共通ヘルパ ----------
@@ -84,7 +95,7 @@ export function statusText(S) {
     case 'showdown': return 'キングから順に手札を公開します…';
     case 'cutin': return `${nm(P, P.king)} のアタック！`;
     case 'lastdraw':
-      if (me === P.king) return 'ラストドロー中… 全員の準備を待っています';
+      if (me === P.king) return (P.cutKind === 'rob' && !P.confirmed[me]) ? 'ロブアタック！手札を並べて式を作り、「確定」を押してください' : 'ラストドロー中… 全員の準備を待っています';
       if (!P.ldone[me]) return 'ラストドロー：2枚引きました。捨てる1枚を選んでください';
       return P.confirmed[me] ? '他のプレイヤーを待っています…' : '手札を並べて式を作り、「確定」を押してください';
     case 'reveal': return '結果発表';
@@ -124,7 +135,7 @@ export function lobbyHTML(S) {
     <div class="codebox">部屋コード<strong>${esc(S.code)}</strong></div>
     <ul class="plist">${list}</ul>
     ${ps.length > 4 ? '<p class="muted">5人目以降は参加できません（最大4人）</p>' : ''}
-    ${settings}<button class="btn ghost" data-act="leave">退出</button></div></div>`;
+    ${settings}<div class="btnrow"><button class="btn mini ghost" data-act="settings">⚙ 初心者向け設定</button><button class="btn ghost" data-act="leave">退出</button></div></div></div>`;
 }
 
 // ---------- ゲーム画面 ----------
@@ -160,6 +171,23 @@ function pilesHTML(S) {
     <div class="pilebox"><div class="pile">${disc}</div><div class="plabel">捨て札 ${P.discardCount}</div>${who}</div></div>`;
 }
 
+const WAIT_REPS = (() => { const m = new Map(); CARDS.forEach(c => { const k = cardKey(c.id); if (['bow', 'trade1', 'trade2', 'devil'].includes(k)) return; if (!m.has(k)) m.set(k, c.id); }); return [...m.values()]; })();
+const waitCache = new Map();
+function waitsHTML(S) {
+  const P = S.pub, me = S.uid;
+  if (!S.opts.waits || P.phase !== 'duel' || S.hand.length !== P.formulaLen - 1 || ['reveal', 'showdown', 'cutin', 'lastdraw'].includes(P.step)) return '';
+  const bows = P.bows[me] || 0, reb = !!P.rebellion[me];
+  const key = [...S.hand].sort((a, b) => a - b).join(',') + '|' + bows + '|' + reb;
+  let res = waitCache.get(key);
+  if (!res) { res = WAIT_REPS.filter(id => solveBest([...S.hand, id], bows, reb)).map(id => cardLabel(id)); waitCache.set(key, res); if (waitCache.size > 60) waitCache.clear(); }
+  return `<div class="waits">待ち（これが来ればアガリ）: ${res.length ? esc(res.join('　')) : 'なし'}</div>`;
+}
+function currentHTML(S) {
+  const P = S.pub;
+  if (!S.opts.current || S.order.length !== P.formulaLen || P.phase !== 'duel' || ['reveal', 'showdown', 'cutin'].includes(P.step)) return '';
+  const c = calcOrdered(S.order, P.bows[S.uid] || 0, modeOf(S)); if (!c) return '';
+  return `<div class="cur ${c.ok ? 'ok' : ''}">今の並び: ${esc(c.line)}${c.ok ? '　✔コンプリート' : ''}</div>`;
+}
 export function controlsHTML(S) {
   const P = S.pub, me = S.uid, my = S.order; const locked = S.lockRev === P.rev;
   const dis = locked ? 'disabled' : '';
@@ -196,11 +224,13 @@ export function controlsHTML(S) {
     h += `<button class="btn gold pulse" data-act="tready" ${dis}>並べ替え完了（確定）</button>`;
   } else if (P.step === 'devildiscard' && P.devilDisc && P.devilDisc.target === me) {
     h += S.sel != null && my.includes(S.sel) && S.sel !== DEVIL_ID ? `<button class="btn red" data-act="devdiscard" ${dis}>この1枚を捨てる</button>` : '<span class="note">デビルゼロ以外から、捨てる1枚を選んでください</span>';
+  } else if (P.step === 'lastdraw' && me === P.king && P.cutKind === 'rob' && !P.confirmed[me]) {
+    h += `<button class="btn gold pulse" data-act="lconfirm" ${dis}>確定（公開する）</button>`;
   } else if (P.step === 'lastdraw' && me !== P.king) {
     if (!P.ldone[me]) h += S.sel === DEVIL_ID && P.devil.pushed ? '<span class="note">押し付けられたデビルゼロは捨てられません</span>' : S.sel != null && my.includes(S.sel) ? `<button class="btn gold" data-act="lastdiscard" ${dis}>この1枚を捨てる</button>` : '<span class="note">捨てる1枚を選んでください</span>';
     else if (!P.confirmed[me]) h += `<button class="btn gold pulse" data-act="lconfirm" ${dis}>確定（公開する）</button>`;
   }
-  return (tools ? `<div class="tools">${tools}</div>` : '') + `<div class="btnrow">${h}</div>`;
+  return waitsHTML(S) + currentHTML(S) + (tools ? `<div class="tools">${tools}</div>` : '') + `<div class="btnrow">${h}</div>`;
 }
 
 function handRowHTML(S) {
@@ -220,7 +250,7 @@ export function gameHTML(S) {
   let seats = ''; for (let k = 1; k < N; k++) seats += seatHTML(S, P.order[(mi + k) % N], pos[k]);
   const chips = P.order.map(u => `<span class="chip ${u === me ? 'mine' : ''}">${nm(P, u)} <b>${P.scores[u]}</b></span>`).join('');
   const logs = (S.logOpen ? P.log.slice(-30) : P.log.slice(-4)).map(l => `<div>${esc(l)}</div>`).join('');
-  return `<div class="topbar"><span class="logo-s">Calcolon</span><span class="duel">DUEL ${P.duel}/${P.totalDuels}</span><span class="chips">${chips}</span><span class="room">${esc(S.code)}</span><button class="btn mini" data-act="leave">退出</button></div>
+  return `<div class="topbar"><span class="logo-s">Calcolon</span><span class="duel">DUEL ${P.duel}/${P.totalDuels}</span><span class="chips">${chips}</span><span class="room">${esc(S.code)}</span><button class="btn mini" data-act="scores">点数表</button><button class="btn mini ghost" data-act="settings" title="初心者向け設定">⚙</button><button class="btn mini" data-act="leave">退出</button></div>
   <div class="scene"><div class="table">${pilesHTML(S)}</div>${seats}</div>
   <div class="logbox ${S.logOpen ? 'open' : ''}" data-act="log">${logs}</div>
   <div class="me" data-uid="${esc(me)}"><div class="statusline">${statusText(S)}</div>${plate(S, me)}<div class="ctl">${controlsHTML(S)}</div><div class="hand n${S.order.length}">${handRowHTML(S)}</div><div class="rackbar"></div><div class="bowfield">${bowsHTML(P, me)}</div></div>
@@ -245,7 +275,7 @@ export function resultHTML(S) {
     const rank = [...P.order].sort((a, b) => P.scores[b] - P.scores[a]);
     const rows = rank.map((u, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="rk">${i + 1}</span><span class="rn">${nm(P, u)}</span><span class="rs">${P.scores[u]}</span></li>`).join('');
     return `<div class="result end"><div class="rbox"><h2>FINAL RESULT</h2><ol class="rank">${rows}</ol>
-      <div class="btnrow">${isHost ? '<button class="btn gold" data-act="rematch">もう一度遊ぶ</button>' : '<span class="note">ホストが再戦を選べます</span>'}<button class="btn ghost" data-act="leave">退出</button></div></div></div>`;
+      <div class="btnrow">${isHost ? '<button class="btn gold" data-act="rematch">もう一度遊ぶ</button>' : '<span class="note">ホストが再戦を選べます</span>'}<button class="btn" data-act="scores">点数表</button><button class="btn ghost" data-act="leave">退出</button></div></div></div>`;
   }
   const final = P.step === 'reveal' && R;
   const list = P.show && P.show.list && P.show.list.length ? P.show.list : P.order;
@@ -263,21 +293,46 @@ export function resultHTML(S) {
     const burst = info.value == null;
     if (!final) {
       const stamp = burst ? `<div class="rstamp ${info.devil ? 'dev' : ''} ${anim}">${info.devil ? 'DEVIL BURST' : 'BURST'}</div>` : `<div class="rval ${anim}">${info.value}<small>点</small></div>`;
-      return `<div class="rrow shown ${burst ? 'isburst' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div><div class="rinfo"><div class="rform">${burst ? '式を作れず' : esc(info.text) + ' ＝ ' + info.value}</div>${stamp}</div></div>`;
+      return `<div class="rrow shown ${burst ? 'isburst' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div><div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div>${stamp}</div></div>`;
     }
     const [lab, cl] = STATUS[info.status];
     const win = R.winners.includes(u);
     return `<div class="rrow ${win ? 'winner' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div>
-      <div class="rinfo"><div class="rform">${burst ? '式を作れず' : esc(info.text) + ' ＝ ' + info.value}</div><div class="rst ${cl}">${lab}${info.rebellion ? ' ・次回リベリオン🚩' : ''}</div>
+      <div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div><div class="rst ${cl}">${lab}${info.rebellion ? ' ・次回リベリオン🚩' : ''}</div>
       <div class="rdelta ${info.delta < 0 ? 'neg' : ''}">${info.delta > 0 ? '+' : ''}${info.delta}<small>計 ${info.total}</small></div>${info.note ? `<div class="rnote">${esc(info.note)}</div>` : ''}</div></div>`;
   }).join('');
-  const btn = final ? `<div class="btnrow">${isHost ? `<button class="btn gold" data-act="next">${P.duel >= P.totalDuels ? '最終結果へ' : '次のデュエルへ'}</button>` : '<span class="note">ホストが進めるのを待っています…</span>'}</div>` : '';
+  const btn = final ? `<div class="btnrow">${isHost ? `<button class="btn gold" data-act="next">${P.duel >= P.totalDuels ? '最終結果へ' : '次のデュエルへ'}</button>` : '<span class="note">ホストが進めるのを待っています…</span>'}<button class="btn" data-act="scores">点数表</button></div>` : '';
   return `<div class="result ${final ? '' : 'showdown'}"><div class="rbox"><h2>${final ? 'DUEL ' + P.duel + ' RESULT' : 'SHOWDOWN'}</h2>${rows}${btn}</div></div>`;
 }
 
 // ---------- モーダル ----------
+export function settingsHTML(S) {
+  const o = S.opts;
+  return `<div class="mback"><div class="mbox"><h3>初心者向け設定</h3><p class="muted">自分の画面だけに表示されます（初期値はどちらもOFF）。</p>
+    <label class="chk"><input type="checkbox" data-opt="waits" ${o.waits ? 'checked' : ''}><span>待ち表示<small>何のカードが来ればアガリになるかを表示</small></span></label>
+    <label class="chk"><input type="checkbox" data-opt="current" ${o.current ? 'checked' : ''}><span>今の並びの計算結果を表示<small>数・記・数・記・数の並びのときだけ</small></span></label>
+    <div class="btnrow"><button class="btn gold" data-act="mclose">閉じる</button></div></div></div>`;
+}
+export function scoresHTML(S) {
+  const P = S.pub; if (!P) return '';
+  const n = P.totalDuels; let head = ''; for (let i = 0; i < n; i++) head += `<th>${i + 1}</th>`;
+  const rows = P.order.map(u => {
+    let tds = '';
+    for (let i = 0; i < n; i++) {
+      const h = (P.hist[u] || [])[i]; let c = '';
+      if (h) c = h.r ? `<span class="dg"><i>${h.p}</i><b>${h.p + h.r}</b></span>` : `${h.p}`;
+      tds += `<td class="${h && h.p + (h.r || 0) < 0 ? 'neg' : ''}">${c}${i === n - 1 ? '<small class="x2">×2</small>' : ''}</td>`;
+    }
+    return `<tr><th class="pl">${nm(P, u)}</th>${tds}<td class="tot">${P.scores[u]}</td></tr>`;
+  }).join('');
+  return `<div class="mback"><div class="mbox wide"><h3>点数表</h3><table class="stab"><thead><tr><th class="corner">Duel<br>Player</th>${head}<th class="tt">TOTAL</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="muted">斜線のマスは「0勝利」で後から加算された点数（左上が元の点、右下が確定点）です。最終デュエルは全部2倍。</p>
+    <div class="btnrow"><button class="btn gold" data-act="mclose">閉じる</button></div></div></div>`;
+}
 export function modalHTML(S) {
-  const P = S.pub, me = S.uid;
+  if (S.modal && S.modal.type === 'settings') return settingsHTML(S);
+  if (S.modal && S.modal.type === 'scores') return scoresHTML(S);
+  const P = S.pub, me = S.uid; if (!P) return '';
   const others = P.order.filter(u => u !== me);
   const close = '<button class="btn ghost" data-act="mclose">やめる</button>';
   // 引き抜きフェーズ（トレードを仕掛けた本人）

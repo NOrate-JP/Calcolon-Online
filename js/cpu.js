@@ -70,7 +70,10 @@ export function cpuAction(G, u) {
       return null;
     }
     case 'lastdraw': {
-      if (u === G.king) return null;
+      if (u === G.king) {
+        if (G.cutKind === 'rob' && !G.confirmed[u]) { const r = solveBest(hand, bows, reb); return { t: 'lastConfirm', uid: u, order: r ? r.ids : hand.slice(), mode: r ? r.mode : 'N' }; }
+        return null;
+      }
       if (!G.ldone[u]) {
         let best = null, bv = -1;
         const ok = hand.filter(c => !(c === DEVIL_ID && G.devil.pushed));   // 押し付けられたデビルゼロは捨てられない

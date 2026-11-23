@@ -134,6 +134,22 @@ export function evalOrdered(ids, bows = 0, rebel = false, mode = 'N') {
   return best;
 }
 
+/** 並べた順の「計算結果」を表示用に返す（コンプリートでなくてもよい）。数記数記数の形でなければ null。小数は第2位まで */
+export function calcOrdered(ids, bows = 0, mode = 'N') {
+  if (!ids || (ids.length !== 5 && ids.length !== 7)) return null;
+  const cs = ids.map(i => CARDS[i]);
+  for (let k = 0; k < cs.length; k++) if (cs[k].kind !== (k % 2 === 0 ? 'num' : 'op')) return null;
+  let span = null;
+  if (mode !== 'N' && bows >= 2 && (modesFor(ids.length).includes(mode) || ((mode === 'L' || mode === 'R') && ids.length === 5))) span = spanOf(mode);
+  const nums = [], ops = [], tx = [];
+  cs.forEach((c, k) => { if (k % 2 === 0) { const v = numVars(c, false)[0]; nums.push(v.f); tx.push(v.t); } else { ops.push(c.op); tx.push(OP_SYM[c.op]); } });
+  if (span) { tx[2 * span[0]] = '(' + tx[2 * span[0]]; tx[2 * span[1]] = tx[2 * span[1]] + ')'; }
+  const text = tx.join(' '); const r = evalSpan(nums, ops, span);
+  if (!r) return { text, value: '計算不能', line: text + ' ＝ 計算不能', ok: false };
+  const value = r.d === 1 ? String(r.n) : (r.n / r.d).toFixed(2);
+  return { text, value, line: `${text} ＝ ${value}`, ok: r.d === 1 && r.n >= 0 && r.n % 10 === 0 };
+}
+
 /** 手札(5枚 or 7枚)をどう並べ替えても作れる最大の式（ロブ判定・CPU用）。作れなければ null */
 export function solveBest(handIds, bows = 0, rebel = false) {
   const cs = handIds.map(i => CARDS[i]); const len = cs.length;
@@ -158,7 +174,7 @@ export function applyWinScores(G, per, winners) {
     const gain = isFinal ? eff * 2 : eff; if (isFinal) notes.push('最終デュエル×2');
     let extra = 0; if (G.prevWin != null && eff > 0 && eff === G.prevWin) { extra = eff; notes.push(`ダブルスコア +${eff}`); }
     let retro = 0; if (pend.includes(u)) { retro = eff; notes.push(`前回の0勝利にも +${eff}`); }
-    r.eff = eff; r.delta = gain + extra + retro; r.note = notes.join(' / ');
+    r.eff = eff; r.retro = retro; r.delta = gain + extra + retro; r.note = notes.join(' / ');
   });
 }
 
@@ -175,7 +191,7 @@ const sameSet = (a, b) => a.length === b.length && [...a].sort((x, y) => x - y).
 export function createGame(hostUid, uids, names, opts = {}) {
   const G = {
     hostUid, order: uids.slice(), names: { ...names }, cpu: { ...(opts.cpu || {}) }, totalDuels: opts.totalDuels || 5, robMs: opts.robMs ?? 3500, cutMs: opts.cutMs ?? 2600,
-    formulaLen: opts.final && uids.length === 2 ? 7 : 5, zeroPending: [], prevWin: null,
+    formulaLen: opts.final && uids.length === 2 ? 7 : 5, zeroPending: [], prevWin: null, hist: {},
     duel: 0, scores: {}, nextRebellion: {}, log: [], events: [], evSeq: 0, robSeq: 0, cutSeq: 0, showSeq: 0, rev: 0, lastWinner: null, phase: 'duel'
   };
   uids.forEach(u => { G.scores[u] = 0; });
@@ -186,7 +202,7 @@ export function createGame(hostUid, uids, names, opts = {}) {
 export function hydrate(G) {
   G.deck = G.deck || []; G.discard = G.discard || []; G.log = G.log || []; G.events = G.events || [];
   G.robReq = G.robReq || []; G.ldone = G.ldone || {}; G.confirmed = G.confirmed || {}; G.arr = G.arr || {};
-  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600; G.showSeq = G.showSeq || 0; G.formulaLen = G.formulaLen || 5; G.zeroPending = G.zeroPending || [];
+  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600; G.showSeq = G.showSeq || 0; G.formulaLen = G.formulaLen || 5; G.zeroPending = G.zeroPending || []; G.hist = G.hist || {};
   if (G.show) G.show.shown = G.show.shown || [];
   G.rebellion = G.rebellion || {}; G.bows = G.bows || {}; G.bowIds = G.bowIds || {}; G.hands = G.hands || {};
   G.order.forEach(u => { G.hands[u] = G.hands[u] || []; G.bowIds[u] = G.bowIds[u] || []; G.bows[u] = G.bowIds[u].length; });
@@ -229,7 +245,7 @@ function endTurn(G) {
 function doAttack(G, uid, viaRob) {
   G.king = uid; G.step = 'cutin'; G.cutKind = viaRob ? 'rob' : 'attack'; G.cutSeq++;
   G.ldone = {}; G.confirmed = {}; G.skipNext = false; G.robReq = []; G.trade = null;
-  G.confirmed[uid] = true;
+  G.confirmed[uid] = !viaRob;   // ロブアタックは、あとで自分で並べ替えて確定する
   ev(G, viaRob ? 'rob' : 'attack', viaRob ? `${nm(G, uid)}のロブアタック！` : `${nm(G, uid)}がアタック！`, uid);
 }
 /** カットイン終了 → 全員ラストドロー（ホストのタイマーから呼ぶ） */
@@ -271,6 +287,12 @@ function startShowdown(G) {
     else { r.status = 'burst'; r.delta = -10; }
     if (r.status === 'win' && r.hasDevil) r.rebellion = true;
   });
+  if (G.duel >= G.totalDuels) G.order.forEach(u => { if (per[u].delta < 0) { per[u].delta *= 2; per[u].note = '最終デュエル×2'; } });
+  G.order.forEach(u => {
+    if (per[u].value != null) return;
+    const a = G.arr[u], c = a ? calcOrdered(a.ids, G.bows[u], a.mode) : null;
+    per[u].calc = c ? c.line : '';
+  });
   applyWinScores(G, per, winners);
   G.order.forEach(u => { per[u].total = G.scores[u] + per[u].delta; });
   G.result = { per, winners, king: G.king, max };
@@ -293,7 +315,12 @@ export function advanceShowdown(G) {
 }
 function finalizeShowdown(G) {
   const { per, winners, max } = G.result;
-  G.order.forEach(u => { G.scores[u] += per[u].delta; per[u].total = G.scores[u]; if (per[u].rebellion) G.nextRebellion[u] = true; });
+  G.order.forEach(u => {
+    G.scores[u] += per[u].delta; per[u].total = G.scores[u]; if (per[u].rebellion) G.nextRebellion[u] = true;
+    const h = G.hist[u] = G.hist[u] || [];
+    h[G.duel - 1] = { p: per[u].delta - (per[u].retro || 0), r: 0 };
+    if (per[u].retro && G.duel >= 2 && h[G.duel - 2]) h[G.duel - 2].r = (h[G.duel - 2].r || 0) + per[u].retro;
+  });
   G.lastWinner = winners[0]; G.prevWin = per[winners[0]].eff; G.zeroPending = winners.filter(u => per[u].eff === 0); G.step = 'reveal';
   ev(G, 'reveal', `結果発表！ 勝者: ${winners.map(u => nm(G, u)).join('、')}（${max}点）`);
   G.order.forEach(u => {
@@ -396,7 +423,8 @@ function reduceInner(G, a, uid, mine) {
       return OK;
     }
     case 'lastConfirm': {
-      if (G.phase !== 'duel' || G.step !== 'lastdraw' || uid === G.king || !G.ldone[uid] || G.confirmed[uid]) return ERR('今は確定できません');
+      const robKing = uid === G.king && G.cutKind === 'rob';
+      if (G.phase !== 'duel' || G.step !== 'lastdraw' || G.confirmed[uid] || !(robKing || (uid !== G.king && G.ldone[uid]))) return ERR('今は確定できません');
       if (!Array.isArray(a.order) || !sameSet(a.order, mine)) return ERR('手札の並びが不正です');
       G.hands[uid] = a.order.slice(); G.arr[uid] = { ids: a.order.slice(), mode: modesFor(G.formulaLen).includes(a.mode) ? a.mode : 'N' };
       G.confirmed[uid] = true; say(G, `${nm(G, uid)}が手札を確定した`);
@@ -412,7 +440,7 @@ function reduceInner(G, a, uid, mine) {
     }
     case 'rematch': {
       if (uid !== G.hostUid || G.phase !== 'end') return ERR('今はできません');
-      G.duel = 0; G.order.forEach(u => { G.scores[u] = 0; }); G.nextRebellion = {}; G.zeroPending = []; G.prevWin = null;
+      G.duel = 0; G.order.forEach(u => { G.scores[u] = 0; }); G.nextRebellion = {}; G.zeroPending = []; G.prevWin = null; G.hist = {};
       startDuel(G, G.order[rnd(G.order.length)]); return OK;
     }
   }
@@ -481,8 +509,6 @@ export function closeRob(G) {
     req.sort((x, y) => ((G.order.indexOf(x) - bi + n) % n) - ((G.order.indexOf(y) - bi + n) % n));
     const r = req[0]; rm(G.discard, G.lastDiscard.id); G.hands[r].push(G.lastDiscard.id);
     G.lastDiscard = null;
-    const sol = solveBest(G.hands[r], G.bows[r], G.rebellion[r]);   // ロブアタックは自動で式を組む
-    G.hands[r] = sol.ids.slice(); G.arr[r] = { ids: sol.ids, mode: sol.mode };
     doAttack(G, r, true);
   } else { G.robReq = []; endTurn(G); }
   tidy(G); G.rev++;
@@ -493,9 +519,9 @@ export function publicView(G) {
   const handCounts = {}; G.order.forEach(u => { handCounts[u] = G.hands[u].length; });
   const dv = G.devil, shown = dv.pushed && dv.holder;
   const shownInfo = {};
-  if (G.show && G.result) G.show.shown.forEach(u => { const r = G.result.per[u]; shownInfo[u] = { hand: r.hand, ids: r.ids, text: r.text, value: r.value, mode: r.mode, bows: r.bows, devil: r.hasDevil }; });
+  if (G.show && G.result) G.show.shown.forEach(u => { const r = G.result.per[u]; shownInfo[u] = { hand: r.hand, ids: r.ids, text: r.text, value: r.value, mode: r.mode, bows: r.bows, devil: r.hasDevil, calc: r.calc || '' }; });
   return {
-    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, formulaLen: G.formulaLen, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
+    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, formulaLen: G.formulaLen, hist: G.hist, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
     turn: G.turn, step: G.step, deckCount: G.deck.length, discardCount: G.discard.length, discardTop: G.discard.slice(-3),
     lastDiscard: G.lastDiscard || null, handCounts, bows: G.bows,
     devil: { holder: shown ? dv.holder : null, pushed: !!dv.pushed, idx: shown ? G.hands[dv.holder].indexOf(DEVIL_ID) : -1 },

@@ -33,7 +33,7 @@ button{font:inherit}
 .logo-big{font-size:clamp(64px,16vw,150px)}
 .logo-mid{font-size:clamp(44px,10vw,80px)}
 .logo-sub{color:#e9c9a8;letter-spacing:.14em;font-size:clamp(12px,2.6vw,16px);text-shadow:0 0 12px #c3182c}
-.panel{width:min(420px,92vw);background:linear-gradient(#1d0509ee,#0c0205ee);border:1px solid var(--gold);padding:22px;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 0 4px #0008,0 0 0 5px #d9bd7233,0 20px 40px #000a;clip-path:polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px)}
+.panel{width:min(420px,92vw);background:linear-gradient(#1d0509ee,#0c0205ee);border:1px solid var(--gold);padding:22px;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 0 4px #0008,0 0 0 5px #d9bd7233,0 20px 40px #000a}
 .panel.wide{width:min(560px,92vw)}
 .panel label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:#cdb98a}
 .panel input,.panel select{background:#05070a;color:var(--paper);border:1px solid #d9bd7288;padding:.65em .8em;font:inherit;font-size:16px;border-radius:2px}
@@ -265,7 +265,7 @@ button{font:inherit}
 .hand.n8 .card,.hand.n8 .paren{--cw:clamp(34px,9.2vw,92px)}
 .hand.n7 .card,.hand.n8 .card{margin:0 1px}
 .rnote{font-size:12px;color:#ffd86b;margin-top:2px}
-.rcards{flex-wrap:wrap}
+.rcards{flex-wrap:nowrap}
 
 /* 初心者向け表示・点数表・読み込み */
 .loading{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--gold);letter-spacing:.1em}
@@ -295,3 +295,34 @@ button{font:inherit}
 .hand .card.lifted{transition:none!important;z-index:30;filter:drop-shadow(0 0 14px #ffd86baa) drop-shadow(0 18px 12px #000c)}
 .hand .card.settle{transition:transform .15s cubic-bezier(.3,1.4,.5,1)!important;z-index:30}
 .hand .card .cimg{pointer-events:none}
+
+/* 括弧＝ボウのカード（2枚目は上下反転して「)」） */
+.hand .card.parencard{cursor:default;margin:0 -6px;transform:scale(.82)}
+.hand .card.parencard.flipbow{transform:scale(.82) rotate(180deg)}
+.rcards .card.parencard{margin:0 -4px}
+.rcards .card.parencard.flipbow{transform:rotate(180deg)}
+.rcards .card.parencard.flipbow.flip{animation:flipr .7s both;animation-delay:var(--d,0s)}
+@keyframes flipr{0%{transform:rotate(180deg) rotateY(90deg) scale(.8);opacity:0}100%{transform:rotate(180deg) rotateY(0) scale(1);opacity:1}}
+/* 結果のカードは改行しない（枚数に応じて縮める） */
+.rcards{flex-wrap:nowrap;overflow:hidden}
+.rcards.c6 .card,.rcards.c7 .card{--cw:clamp(34px,6.4vw,64px)}
+.rcards.c8 .card,.rcards.c9 .card{--cw:clamp(30px,5.4vw,56px)}
+/* デッキ設定 */
+.deckbox{width:min(900px,100%)}
+.dkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(124px,1fr));gap:10px;margin:12px 0}
+.dk{display:flex;flex-direction:column;align-items:center;gap:4px;padding:8px 4px;background:#ffffff08;border:1px solid #d9bd7222}
+.dk.chg{border-color:#ffd86b88;background:#ffd86b12}
+.dk.zero .dkcard{opacity:.3;filter:grayscale(1)}
+.dk .card{--cw:62px}
+.dkctl{display:flex;align-items:center;gap:6px}.dkctl b{font-family:var(--fnum);font-size:20px;min-width:1.4em;color:#fff}
+.dkctl .btn.mini{padding:.05em .5em;font-size:15px}
+.dk small{font-size:11px;color:#cdb98a;text-align:center}
+.dktotal{font-size:15px}.dktotal b{font-family:var(--fnum);font-size:22px;color:#ffd86b}
+.dktotal.bad{color:#ff9aa4}.dktotal.bad b{color:#ff6a74}
+/* フレイムアローの選択 */
+.flamegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(82px,1fr));gap:10px;margin:12px 0}
+.fk{display:flex;flex-direction:column;align-items:center;gap:3px}
+.fk .card{--cw:66px;cursor:pointer;transition:transform .12s,filter .12s}
+.fk .card:hover{transform:translateY(-6px) scale(1.06);filter:drop-shadow(0 0 10px #ff7a3a) drop-shadow(0 5px 3px #000)}
+.fk.none{opacity:.3}.fk.none .card{cursor:not-allowed}
+.fk small{font-size:11px;color:#e8c9a0;text-align:center}

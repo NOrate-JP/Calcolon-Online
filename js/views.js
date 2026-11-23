@@ -1,5 +1,5 @@
 // 画面のHTML文字列を作る関数群（DOM/Firebase非依存）
-import { CARDS, DEVIL_ID, cardKey, cardLabel, keyLabel, sortRank, solveBest, evalOrdered, calcOrdered, spanOf, modesFor, FLAME_KEYS, OP_SYM, OP_JP } from './engine.js';
+import { CARDS, DEVIL_ID, DECK_KEYS, DEFAULT_DECK, normDeck, deckTotal, deckMinimum, maxCopies, repId, cardKey, cardLabel, keyLabel, sortRank, solveBest, evalOrdered, calcOrdered, spanOf, modesFor, FLAME_KEYS, OP_SYM, OP_JP } from './engine.js';
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -10,7 +10,7 @@ export function normPub(P) {
   P.log = P.log || []; P.events = P.events || []; P.discardTop = P.discardTop || [];
   P.devil = P.devil || { holder: null, pushed: false, idx: -1 };
   P.rebellion = P.rebellion || {}; P.bows = P.bows || {}; P.handCounts = P.handCounts || {}; P.scores = P.scores || {};
-  P.order = P.order || []; P.names = P.names || {}; P.shownInfo = P.shownInfo || {}; P.formulaLen = P.formulaLen || 5; P.hist = P.hist || {};
+  P.order = P.order || []; P.names = P.names || {}; P.shownInfo = P.shownInfo || {}; P.formulaLen = P.formulaLen || 5; P.hist = P.hist || {}; P.deckCfg = normDeck(P.deckCfg);
   if (P.show) P.show.shown = P.show.shown || [];
   Object.values(P.shownInfo).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
   if (P.result && P.result.per) Object.values(P.result.per).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
@@ -118,6 +118,23 @@ export function setupHTML() {
   return `<div class="title-screen"><div class="logo-big">Calcolon</div><div class="panel wide"><h3>Firebaseの設定が必要です</h3>
   <p><code>js/firebase-config.js</code> に Firebase の設定を貼り付けてください。手順は README.md を参照。</p></div></div>`;
 }
+export const isCustomDeck = cfg => { const c = normDeck(cfg); return DECK_KEYS.some(k => c[k] !== DEFAULT_DECK[k]); };
+export function deckHTML(S) {
+  const m = S.meta, isHost = m.hostUid === S.uid, c = normDeck(m.deck);
+  const nPlayers = Math.max(2, Math.min(4, Object.keys(S.players || {}).length));
+  const total = deckTotal(c), min = deckMinimum(nPlayers, m.finalRule ? 7 : 5);
+  const cells = DECK_KEYS.map(k => {
+    const v = c[k], d = DEFAULT_DECK[k];
+    return `<div class="dk ${v === 0 ? 'zero' : ''} ${v !== d ? 'chg' : ''}">${cardHTML(repId(k), 'dkcard')}
+      <div class="dkctl">${isHost ? `<button class="btn mini" data-act="deckdec" data-k="${k}" ${v <= 0 ? 'disabled' : ''}>－</button>` : ''}<b>${v}</b>${isHost ? `<button class="btn mini" data-act="deckinc" data-k="${k}" ${v >= maxCopies(k) ? 'disabled' : ''}>＋</button>` : ''}</div>
+      <small>${esc(keyLabel(k))}${v !== d ? `（標準${d}）` : ''}</small></div>`;
+  }).join('');
+  return `<div class="mback"><div class="mbox wide deckbox"><h3>高度な設定：デッキの枚数</h3>
+    <p class="muted">0枚にするとそのカードは出ません。増やすと出やすくなります（各9枚まで、デビルゼロは1枚まで）。</p>
+    <div class="dkgrid">${cells}</div>
+    <p class="dktotal ${total < min ? 'bad' : ''}">合計 <b>${total}</b> 枚${total < min ? `　— 少なすぎます（${nPlayers}人なら${min}枚以上）` : ''}</p>
+    <div class="btnrow">${isHost ? '<button class="btn" data-act="deckreset">デフォルトに戻す</button>' : ''}<button class="btn gold" data-act="mclose">閉じる</button></div></div></div>`;
+}
 export function lobbyHTML(S) {
   const m = S.meta, isHost = m.hostUid === S.uid;
   const ps = Object.entries(S.players || {}).map(([uid, v]) => ({ uid, ...v })).sort((a, b) => a.joinedAt - b.joinedAt);
@@ -129,8 +146,9 @@ export function lobbyHTML(S) {
     <label>デュエル数<select id="sel-duels">${opt([1, 2, 3, 5, 7, 10], m.totalDuels, x => x + '回')}</select></label>
     <label>ロブ猶予<select id="sel-rob">${opt([2000, 3000, 3500, 5000, 8000], m.robMs, x => (x / 1000) + '秒')}</select></label>
     <label class="span2">ルール<select id="sel-final"><option value="0" ${m.finalRule ? '' : 'selected'}>通常（手札4枚・式5枚）</option><option value="1" ${m.finalRule ? 'selected' : ''}>決勝ルール（2人専用・手札6枚・式7枚）</option></select></label></div>
+    <button class="btn mini ghost" data-act="deck">高度な設定（デッキ枚数）… ${deckTotal(m.deck)}枚${isCustomDeck(m.deck) ? '・カスタム' : ''}</button>
     <button class="btn gold" data-act="start" ${ps.length < 2 ? 'disabled' : ''}>ゲーム開始（${Math.min(ps.length, 4)}人）</button>` : `<p class="wait">ホストの開始を待っています…</p>
-    <p class="muted">デュエル数 ${m.totalDuels}回 / ロブ猶予 ${(m.robMs / 1000)}秒 / ${m.finalRule ? '決勝ルール' : '通常ルール'}</p>`;
+    <p class="muted">デュエル数 ${m.totalDuels}回 / ロブ猶予 ${(m.robMs / 1000)}秒 / ${m.finalRule ? '決勝ルール' : '通常ルール'} / デッキ ${deckTotal(m.deck)}枚${isCustomDeck(m.deck) ? '（カスタム）' : ''}</p>`;
   return `<div class="title-screen"><div class="logo-mid">Calcolon</div><div class="panel">
     <div class="codebox">部屋コード<strong>${esc(S.code)}</strong></div>
     <ul class="plist">${list}</ul>
@@ -235,7 +253,7 @@ export function controlsHTML(S) {
 
 function handRowHTML(S) {
   const P = S.pub; const o = S.order, m = modeOf(S), sel = S.sel, sp = o.length === P.formulaLen ? spanOf(m) : null;
-  const paren = c => `<span class="paren">${c}</span>`;
+  const paren = c => cardHTML(BOW_ID, 'parencard' + (c === ')' ? ' flipbow' : ''));
   let out = '';
   o.forEach((id, i) => {
     if (sp && i === 2 * sp[0]) out += paren('(');
@@ -262,9 +280,9 @@ const STATUS = { win: ['勝利', 'st-win'], complete: ['コンプリート（0�
 function formulaCards(ids, mode, anim, len) {
   const sp = ids.length === len ? spanOf(mode) : null; let cs = '';
   ids.forEach((id, i) => {
-    if (sp && i === 2 * sp[0]) cs += '<span class="paren s">(</span>';
+    if (sp && i === 2 * sp[0]) cs += cardHTML(BOW_ID, 'parencard ' + anim, `style="--d:${(i * 0.12).toFixed(2)}s"`);
     cs += cardHTML(id, anim, `style="--d:${(i * 0.12).toFixed(2)}s"`);
-    if (sp && i === 2 * sp[1]) cs += '<span class="paren s">)</span>';
+    if (sp && i === 2 * sp[1]) cs += cardHTML(BOW_ID, 'parencard flipbow ' + anim, `style="--d:${(i * 0.12 + 0.06).toFixed(2)}s"`);
   });
   return cs;
 }
@@ -275,7 +293,7 @@ export function resultHTML(S) {
     const rank = [...P.order].sort((a, b) => P.scores[b] - P.scores[a]);
     const rows = rank.map((u, i) => `<li class="${i === 0 ? 'first' : ''}"><span class="rk">${i + 1}</span><span class="rn">${nm(P, u)}</span><span class="rs">${P.scores[u]}</span></li>`).join('');
     return `<div class="result end"><div class="rbox"><h2>FINAL RESULT</h2><ol class="rank">${rows}</ol>
-      <div class="btnrow">${isHost ? '<button class="btn gold" data-act="rematch">もう一度遊ぶ</button>' : '<span class="note">ホストが再戦を選べます</span>'}<button class="btn" data-act="scores">点数表</button><button class="btn ghost" data-act="leave">退出</button></div></div></div>`;
+      <div class="btnrow">${isHost ? '<button class="btn gold" data-act="rematch">もう一度遊ぶ</button><button class="btn" data-act="tolobby">ロビーに戻る（ルール変更）</button>' : '<span class="note">ホストが再戦かロビーに戻るかを選べます</span>'}<button class="btn" data-act="scores">点数表</button><button class="btn ghost" data-act="leave">退出</button></div></div></div>`;
   }
   const final = P.step === 'reveal' && R;
   const list = P.show && P.show.list && P.show.list.length ? P.show.list : P.order;
@@ -293,11 +311,11 @@ export function resultHTML(S) {
     const burst = info.value == null;
     if (!final) {
       const stamp = burst ? `<div class="rstamp ${info.devil ? 'dev' : ''} ${anim}">${info.devil ? 'DEVIL BURST' : 'BURST'}</div>` : `<div class="rval ${anim}">${info.value}<small>点</small></div>`;
-      return `<div class="rrow shown ${burst ? 'isburst' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div><div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div>${stamp}</div></div>`;
+      return `<div class="rrow shown ${burst ? 'isburst' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards c${ids.length + (info.mode && info.mode !== 'N' && ids.length === P.formulaLen ? 2 : 0)}">${cs}</div><div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div>${stamp}</div></div>`;
     }
     const [lab, cl] = STATUS[info.status];
     const win = R.winners.includes(u);
-    return `<div class="rrow ${win ? 'winner' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div>
+    return `<div class="rrow ${win ? 'winner' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards c${ids.length + (info.mode && info.mode !== 'N' && ids.length === P.formulaLen ? 2 : 0)}">${cs}</div>
       <div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div><div class="rst ${cl}">${lab}${info.rebellion ? ' ・次回リベリオン🚩' : ''}</div>
       <div class="rdelta ${info.delta < 0 ? 'neg' : ''}">${info.delta > 0 ? '+' : ''}${info.delta}<small>計 ${info.total}</small></div>${info.note ? `<div class="rnote">${esc(info.note)}</div>` : ''}</div></div>`;
   }).join('');
@@ -332,6 +350,7 @@ export function scoresHTML(S) {
 export function modalHTML(S) {
   if (S.modal && S.modal.type === 'settings') return settingsHTML(S);
   if (S.modal && S.modal.type === 'scores') return scoresHTML(S);
+  if (S.modal && S.modal.type === 'deck') return deckHTML(S);
   const P = S.pub, me = S.uid; if (!P) return '';
   const others = P.order.filter(u => u !== me);
   const close = '<button class="btn ghost" data-act="mclose">やめる</button>';
@@ -356,8 +375,8 @@ export function modalHTML(S) {
     return `<div class="mback"><div class="mbox"><h3>デビルゼロを押し付ける相手</h3><div class="btnrow wrapr">${ts.length ? ts.map(u => `<button class="btn red" data-act="mpush" data-u="${u}">${nm(P, u)}</button>`).join('') : '<span class="note">押し付けられる相手がいません（リベリオン中の人には押し付けられません）</span>'}</div>${close}</div></div>`;
   }
   if (M.type === 'flame') {
-    return `<div class="mback"><div class="mbox"><h3>フレイムアロー：消すカードを指定</h3><p class="muted">全員の手札からそのカードが1枚ずつ捨てられます（あなたも対象）。デビルゼロ・フレイムアローは指定できません。</p>
-      <div class="keygrid">${FLAME_KEYS.map(k => `<button class="btn mini" data-act="mflame" data-k="${k}">${esc(keyLabel(k))}</button>`).join('')}</div>${close}</div></div>`;
+    return `<div class="mback"><div class="mbox wide"><h3>フレイムアロー：消すカードを指定</h3><p class="muted">全員の手札からそのカードが1枚ずつ捨てられます（あなたも対象）。デビルゼロ・フレイムアローは指定できません。</p>
+      <div class="flamegrid">${FLAME_KEYS.map(k => { const none = P.deckCfg[k] === 0; return `<div class="fk ${none ? 'none' : ''}">${cardHTML(repId(k), 'fkcard', none ? '' : `data-act="mflame" data-k="${k}"`)}<small>${esc(keyLabel(k))}</small></div>`; }).join('')}</div>${close}</div></div>`;
   }
   if (M.type === 'trade') {
     const want = M.reb ? 1 : CARDS[M.cardId].n;

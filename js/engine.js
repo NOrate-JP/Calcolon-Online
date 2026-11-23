@@ -1,16 +1,32 @@
 // カルコロン ルールエンジン（DOM / Firebase 非依存。ホストのみが状態を更新する）
 // 左隣 = 手番順で次のプレイヤー
 
+// カードは種類ごとに最大 MAX_COPIES 枚ぶん定義しておき、デッキ設定の枚数だけ使う（デビルゼロは1枚まで）
+export const MAX_COPIES = 9;
+export const DECK_KEYS = ['n1','n2','n3','n4','n5','n6','n7','n8','n9','n0','tenth','devil','sword','arrow','flame','halberd','shield','bow','trade1','trade2'];
+export const DEFAULT_DECK = { n1: 3, n2: 3, n3: 3, n4: 3, n5: 3, n6: 3, n7: 3, n8: 3, n9: 3, n0: 2, tenth: 2, devil: 1, sword: 4, arrow: 3, flame: 1, halberd: 4, shield: 4, bow: 6, trade1: 1, trade2: 1 };
+const KEY_DEF = k => {
+  if (/^n\d$/.test(k)) return { kind: 'num', val: k[1] };
+  return ({ tenth: { kind: 'num', val: 'T' }, devil: { kind: 'num', val: 'D' }, sword: { kind: 'op', op: '+', flame: false }, arrow: { kind: 'op', op: '-', flame: false },
+    flame: { kind: 'op', op: '-', flame: true }, halberd: { kind: 'op', op: 'x', flame: false }, shield: { kind: 'op', op: '/', flame: false },
+    bow: { kind: 'bow' }, trade1: { kind: 'trade', n: 1 }, trade2: { kind: 'trade', n: 2 } })[k];
+};
+export const maxCopies = k => (k === 'devil' ? 1 : MAX_COPIES);
 export const CARDS = [];
-const _add = d => { d.id = CARDS.length; CARDS.push(d); };
-for (let v = 1; v <= 9; v++) for (let i = 0; i < 3; i++) _add({ kind: 'num', val: String(v) });
-for (let i = 0; i < 2; i++) _add({ kind: 'num', val: 'T' });      // 1/10
-for (let i = 0; i < 2; i++) _add({ kind: 'num', val: '0' });
-_add({ kind: 'num', val: 'D' });                                  // デビルゼロ
-for (const op of ['+', '-', 'x', '/']) for (let i = 0; i < 4; i++) _add({ kind: 'op', op, flame: op === '-' && i === 0 });
-for (let i = 0; i < 6; i++) _add({ kind: 'bow' });
-_add({ kind: 'trade', n: 1 });
-_add({ kind: 'trade', n: 2 });
+const BY_KEY = {};
+DECK_KEYS.forEach(k => { BY_KEY[k] = []; for (let i = 0; i < maxCopies(k); i++) { const d = { ...KEY_DEF(k), id: CARDS.length }; CARDS.push(d); BY_KEY[k].push(d.id); } });
+/** その種類の代表カードID（表示用） */
+export const repId = k => BY_KEY[k][0];
+/** デッキ設定を正規化（欠けている種類はデフォルト、範囲外は丸める） */
+export function normDeck(cfg) {
+  const out = {};
+  DECK_KEYS.forEach(k => { const v = cfg && cfg[k] != null ? Math.round(Number(cfg[k])) : DEFAULT_DECK[k]; out[k] = Math.max(0, Math.min(maxCopies(k), isNaN(v) ? DEFAULT_DECK[k] : v)); });
+  return out;
+}
+export const deckTotal = cfg => DECK_KEYS.reduce((t, k) => t + normDeck(cfg)[k], 0);
+/** そのデッキで遊べるか（最低枚数） */
+export function deckMinimum(players, formulaLen) { return players * (formulaLen + 1) + 6; }
+export function buildDeck(cfg) { const c = normDeck(cfg); const ids = []; DECK_KEYS.forEach(k => { for (let i = 0; i < c[k]; i++) ids.push(BY_KEY[k][i]); }); return ids; }
 export const DEVIL_ID = CARDS.findIndex(c => c.val === 'D');
 
 export const OP_SYM = { '+': '＋', '-': '－', 'x': '×', '/': '÷' };
@@ -190,11 +206,13 @@ const sameSet = (a, b) => a.length === b.length && [...a].sort((x, y) => x - y).
 
 export function createGame(hostUid, uids, names, opts = {}) {
   const G = {
-    hostUid, order: uids.slice(), names: { ...names }, cpu: { ...(opts.cpu || {}) }, totalDuels: opts.totalDuels || 5, robMs: opts.robMs ?? 3500, cutMs: opts.cutMs ?? 2600,
-    formulaLen: opts.final && uids.length === 2 ? 7 : 5, zeroPending: [], prevWin: null, hist: {},
+    hostUid, order: uids.slice(), names: { ...names }, cpu: { ...(opts.cpu || {}) }, totalDuels: opts.totalDuels || 5, robMs: opts.robMs ?? 2000, cutMs: opts.cutMs ?? 2600,
+    formulaLen: opts.final && uids.length === 2 ? 7 : 5, deckCfg: null, zeroPending: [], prevWin: null, hist: {},
     duel: 0, scores: {}, nextRebellion: {}, log: [], events: [], evSeq: 0, robSeq: 0, cutSeq: 0, showSeq: 0, rev: 0, lastWinner: null, phase: 'duel'
   };
   uids.forEach(u => { G.scores[u] = 0; });
+  G.deckCfg = normDeck(opts.deck);
+  if (deckTotal(G.deckCfg) < deckMinimum(uids.length, G.formulaLen)) G.deckCfg = normDeck(null);   // 少なすぎる設定は標準に戻す
   startDuel(G, uids[rnd(uids.length)]);
   return G;
 }
@@ -202,7 +220,7 @@ export function createGame(hostUid, uids, names, opts = {}) {
 export function hydrate(G) {
   G.deck = G.deck || []; G.discard = G.discard || []; G.log = G.log || []; G.events = G.events || [];
   G.robReq = G.robReq || []; G.ldone = G.ldone || {}; G.confirmed = G.confirmed || {}; G.arr = G.arr || {};
-  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600; G.showSeq = G.showSeq || 0; G.formulaLen = G.formulaLen || 5; G.zeroPending = G.zeroPending || []; G.hist = G.hist || {};
+  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600; G.showSeq = G.showSeq || 0; G.formulaLen = G.formulaLen || 5; G.deckCfg = normDeck(G.deckCfg); G.zeroPending = G.zeroPending || []; G.hist = G.hist || {};
   if (G.show) G.show.shown = G.show.shown || [];
   G.rebellion = G.rebellion || {}; G.bows = G.bows || {}; G.bowIds = G.bowIds || {}; G.hands = G.hands || {};
   G.order.forEach(u => { G.hands[u] = G.hands[u] || []; G.bowIds[u] = G.bowIds[u] || []; G.bows[u] = G.bowIds[u].length; });
@@ -212,7 +230,7 @@ export function hydrate(G) {
 
 export function startDuel(G, firstUid) {
   G.duel++; G.phase = 'duel';
-  G.deck = shuffle([...Array(CARDS.length).keys()]); G.discard = [];
+  G.deck = shuffle(buildDeck(G.deckCfg)); G.discard = [];
   G.hands = {}; G.bows = {}; G.bowIds = {}; G.rebellion = {};
   G.devil = { holder: null, pushed: false };
   G.order.forEach(u => { G.hands[u] = []; G.bows[u] = 0; G.bowIds[u] = []; G.rebellion[u] = !!G.nextRebellion[u]; });
@@ -521,7 +539,7 @@ export function publicView(G) {
   const shownInfo = {};
   if (G.show && G.result) G.show.shown.forEach(u => { const r = G.result.per[u]; shownInfo[u] = { hand: r.hand, ids: r.ids, text: r.text, value: r.value, mode: r.mode, bows: r.bows, devil: r.hasDevil, calc: r.calc || '' }; });
   return {
-    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, formulaLen: G.formulaLen, hist: G.hist, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
+    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, formulaLen: G.formulaLen, hist: G.hist, deckCfg: G.deckCfg, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
     turn: G.turn, step: G.step, deckCount: G.deck.length, discardCount: G.discard.length, discardTop: G.discard.slice(-3),
     lastDiscard: G.lastDiscard || null, handCounts, bows: G.bows,
     devil: { holder: shown ? dv.holder : null, pushed: !!dv.pushed, idx: shown ? G.hands[dv.holder].indexOf(DEVIL_ID) : -1 },

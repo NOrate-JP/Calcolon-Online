@@ -32,6 +32,13 @@ export class Host {
     this.afterChange();
     return update(ref(db, this.p('meta')), { status: 'playing' });
   }
+  /** ゲームを片付けてロビーに戻る（ルールを編集し直すため） */
+  backToLobby() {
+    clearTimeout(this.robTimer); clearTimeout(this.cutTimer); clearTimeout(this.showTimer); clearTimeout(this.cpuTimer); this.cpuTimer = null;
+    this.G = null; this.robScheduled = this.cutScheduled = this.showScheduled = -1;
+    const upd = {}; ['pub', 'private', 'hands', 'actions', 'msgs'].forEach(k => { upd[this.p(k)] = null; }); upd[this.p('meta/status')] = 'lobby';
+    return update(ref(db), upd);
+  }
   handle(a) {
     if (!this.G) return;
     const res = reduce(this.G, a);

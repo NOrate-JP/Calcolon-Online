@@ -1,6 +1,6 @@
 import * as FB from './fb.js';
 import { Host } from './host.js';
-import { CARDS, DEVIL_ID } from './engine.js';
+import { CARDS, DEVIL_ID, DEFAULT_DECK, normDeck, maxCopies, deckTotal, deckMinimum } from './engine.js';
 import { titleHTML, setupHTML, lobbyHTML, gameHTML, modalHTML, modeOf, tradeNFor, normPub, backHTML, preloadCardImages, esc } from './views.js';
 
 const $ = s => document.querySelector(s);
@@ -47,7 +47,7 @@ async function createRoom() {
     const code = genCode();
     const ex = (await FB.get(FB.ref(FB.db, `rooms/${code}/meta`))).exists();
     if (ex) continue;
-    await FB.set(FB.ref(FB.db, `rooms/${code}/meta`), { hostUid: S.uid, status: 'lobby', totalDuels: 5, robMs: 3500, createdAt: Date.now() });
+    await FB.set(FB.ref(FB.db, `rooms/${code}/meta`), { hostUid: S.uid, status: 'lobby', totalDuels: 5, robMs: 2000, createdAt: Date.now() });
     await FB.set(FB.ref(FB.db, `rooms/${code}/players/${S.uid}`), { name, joinedAt: Date.now() });
     enterRoom(code); return;
   }
@@ -92,7 +92,11 @@ function enterRoom(code) {
     render();
   });
   sub(r('players'), v => { S.players = v || {}; render(); });
-  sub(r('pub'), v => { const prev = S.pub; S.pub = normPub(v); onPub(prev); render(); });
+  sub(r('pub'), v => {
+    const prev = S.pub; S.pub = normPub(v);
+    if (!v) { S.seenEv = -1; S.cutSeen = -1; S.revSeen = new Set(); S.prevHand = null; S.prevTop = null; S.sel = null; if (S.modal && !['settings', 'deck'].includes(S.modal.type)) S.modal = null; render(); return; }
+    onPub(prev); render();
+  });
   sub(r('hands/' + S.uid), v => { S.hand = v ? (Array.isArray(v) ? v.filter(x => x != null) : Object.values(v)) : []; render(); });
   sub(r('msgs/' + S.uid), v => { if (v && Date.now() - v.t < 6000) { toast(v.text); S.lockRev = null; render(); } });
 }
@@ -159,10 +163,10 @@ function fly() {
   an.onfinish = () => el.remove();
 }
 function captureHand() {
-  const m = {}; document.querySelectorAll('.hand .card').forEach(c => { m[c.dataset.id] = c.getBoundingClientRect().left; }); return m;
+  const m = {}; document.querySelectorAll('.hand .card.pick').forEach(c => { m[c.dataset.id] = c.getBoundingClientRect().left; }); return m;
 }
 function playFlip(before) {
-  document.querySelectorAll('.hand .card').forEach(c => {
+  document.querySelectorAll('.hand .card.pick').forEach(c => {
     const o = before[c.dataset.id]; if (o == null) return;
     const dx = o - c.getBoundingClientRect().left; if (Math.abs(dx) < 1) return;
     c.animate([{ transform: `translateX(${dx}px)` }, { transform: 'translateX(0)' }], { duration: 260, easing: 'cubic-bezier(.2,.8,.2,1)' });
@@ -184,7 +188,7 @@ function render() {
   const m = S.meta; if (!m) return;
   if (m.status === 'lobby' || !S.pub) {
     const keep = document.activeElement && document.activeElement.id;
-    app.className = ''; app.innerHTML = lobbyHTML(S); $('#modal').innerHTML = S.modal && S.modal.type === 'settings' ? modalHTML(S) : '';
+    app.className = ''; app.innerHTML = lobbyHTML(S); $('#modal').innerHTML = S.modal && ['settings', 'deck'].includes(S.modal.type) ? modalHTML(S) : '';
     if (keep && $('#' + keep)) $('#' + keep).focus();
     return;
   }
@@ -221,9 +225,10 @@ function act(name, el) {
     case 'start': {
       const ps = Object.entries(S.players).map(([uid, v]) => ({ uid, ...v })).sort((a, b) => a.joinedAt - b.joinedAt).slice(0, 4);
       if (ps.length < 2) return toast('2人以上必要です');
+      if (deckTotal(S.meta.deck) < deckMinimum(ps.length, S.meta.finalRule ? 7 : 5)) return toast(`デッキが少なすぎます（${ps.length}人なら${deckMinimum(ps.length, S.meta.finalRule ? 7 : 5)}枚以上）`);
       if (S.meta.finalRule && ps.length !== 2) return toast('決勝ルールは2人専用です（CPU追加/退出で2人にしてください）');
       if (!S.host) return toast('ホストの準備中です。少し待ってください');
-      return S.host.startGame(ps, { totalDuels: S.meta.totalDuels, robMs: S.meta.robMs, finalRule: !!S.meta.finalRule });
+      return S.host.startGame(ps, { totalDuels: S.meta.totalDuels, robMs: S.meta.robMs, finalRule: !!S.meta.finalRule, deck: normDeck(S.meta.deck) });
     }
     case 'draw': return send({ t: 'draw' });
     case 'attack': return send({ t: 'attack', order: S.order.slice(), mode: modeOf(S) });
@@ -257,6 +262,15 @@ function act(name, el) {
     case 'ttake': toggle(S.tsel.take, +el.dataset.i, tradeN()); return render();
     case 'tgo': send({ t: 'tradePick', give: S.tsel.give.slice(), take: S.tsel.take.slice() }); S.tsel = { give: [], take: [] }; return;
     case 'scores': S.modal = { type: 'scores' }; return render();
+    case 'deck': S.modal = { type: 'deck' }; return render();
+    case 'deckinc': case 'deckdec': {
+      if (S.meta.hostUid !== S.uid) return;
+      const k = el.dataset.k, c = normDeck(S.meta.deck), v = c[k] + (name === 'deckinc' ? 1 : -1);
+      if (v < 0 || v > maxCopies(k)) return;
+      return FB.update(FB.ref(FB.db, `rooms/${S.code}/meta/deck`), { [k]: v });
+    }
+    case 'deckreset': if (S.meta.hostUid === S.uid) FB.set(FB.ref(FB.db, `rooms/${S.code}/meta/deck`), { ...DEFAULT_DECK }); return;
+    case 'tolobby': if (S.host && confirm('ロビーに戻りますか？（点数はリセットされます）')) { S.modal = null; S.host.backToLobby(); } return;
     case 'settings': S.modal = { type: 'settings' }; return render();
     case 'next': return send({ t: 'next' });
     case 'rematch': return send({ t: 'rematch' });
@@ -269,7 +283,7 @@ document.addEventListener('click', e => {
   if (c) { act(c.dataset.act, c); return; }
   const b = e.target.closest('[data-act]');
   if (b && !b.disabled) { act(b.dataset.act, b); return; }
-  const h = e.target.closest('.hand .card');
+  const h = e.target.closest('.hand .card.pick');
   if (h && S.pub) { const id = +h.dataset.id; S.sel = S.sel === id ? null : id; render(); }
 });
 // ---------- 手札の並べ替え（ゲーム風：掴んだカードが指に付いてきて、他のカードが隙間を空ける） ----------
@@ -277,12 +291,12 @@ document.addEventListener('click', e => {
 const DRAG_START_PX = 6;
 document.addEventListener('pointerdown', e => {
   if (e.button !== 0 && e.pointerType === 'mouse') return;
-  const c = e.target.closest && e.target.closest('.hand .card'); if (!c) return;
+  const c = e.target.closest && e.target.closest('.hand .card.pick'); if (!c) return;
   S.pd = { id: +c.dataset.id, el: c, x0: e.clientX, y0: e.clientY, pid: e.pointerId, active: false };
 });
 function beginDrag(e) {
   const pd = S.pd, hand = pd.el.closest('.hand');
-  const cards = [...hand.querySelectorAll('.card')];
+  const cards = [...hand.querySelectorAll('.card.pick')];
   pd.hand = hand; pd.cards = cards;
   pd.ids = cards.map(c => +c.dataset.id);
   pd.slots = cards.map(c => { const r = c.getBoundingClientRect(); return r.left + r.width / 2; });   // 各スロットの中心X（固定）

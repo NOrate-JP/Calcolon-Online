@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { applyWinScores, modesFor, CARDS, DEVIL_ID, solveBest, evalOrdered, createGame, reduce, closeRob, finishCutin, advanceShowdown, publicView, FLAME_KEYS } from '../js/engine.js';
+import { applyWinScores, modesFor, deckTotal, normDeck, CARDS, DEVIL_ID, solveBest, evalOrdered, createGame, reduce, closeRob, finishCutin, advanceShowdown, publicView, FLAME_KEYS } from '../js/engine.js';
 import { cpuAction } from '../js/cpu.js';
 
 const find = (pred, used = []) => CARDS.find(c => pred(c) && !used.includes(c.id)).id;
@@ -51,11 +51,13 @@ console.log('solver ok');
 
 // --- CPU同士で通しテスト（ホストの動きも再現） ---
 const FINAL = process.argv.includes('--final');
+assert.equal(deckTotal(null), 56, '標準デッキは56枚');
+const CUSTOM = process.argv.includes('--custom');
 const stat = { games: 0, steps: 0, attack: 0, rob: 0, trade: 0, flame: 0, devil: 0, kk: 0, burst: 0 };
 for (let g = 0; g < (FINAL ? 40 : 300); g++) {
   const n = FINAL ? 2 : 2 + (g % 3); const uids = ['a', 'b', 'c', 'd'].slice(0, n);
   const cpu = Object.fromEntries(uids.map(u => [u, true]));
-  const G = createGame('a', uids, Object.fromEntries(uids.map(u => [u, u])), { totalDuels: 3, robMs: g % 2 ? 3000 : 0, cpu, final: FINAL });
+  const G = createGame('a', uids, Object.fromEntries(uids.map(u => [u, u])), { totalDuels: 3, robMs: g % 2 ? 3000 : 0, cpu, final: FINAL, deck: CUSTOM ? { n9: 9, n5: 6, tenth: 4, devil: 0, trade1: 3, trade2: 0, bow: 2, flame: 2, n1: 0 } : null });
   let guard = 0, lastEv = 0;
   while (G.phase !== 'end' && guard++ < 6000) {
     G.events.forEach(e => { if (e.id > lastEv) { lastEv = e.id; if (stat[e.kind] != null) stat[e.kind]++; } });
@@ -67,7 +69,7 @@ for (let g = 0; g < (FINAL ? 40 : 300); g++) {
     if (acted) {
       // 不変条件
       const all = [...G.deck, ...G.discard]; uids.forEach(u => { all.push(...G.hands[u]); all.push(...G.bowIds[u]); });
-      assert.equal(new Set(all).size, all.length, '重複'); assert.equal(all.length, 56, '枚数保存');
+      assert.equal(new Set(all).size, all.length, '重複'); assert.equal(all.length, deckTotal(G.deckCfg), '枚数保存');
       const dh = uids.filter(u => G.hands[u].includes(DEVIL_ID)); assert.ok(dh.length <= 1);
       const pv = publicView(G);
       if (!G.devil.pushed) assert.equal(pv.devil.holder, null, '押し付け前はデビルハンド非公開');

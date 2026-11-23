@@ -33,10 +33,15 @@ export class Host {
     return update(ref(db, this.p('meta')), { status: 'playing' });
   }
   /** ゲームを片付けてロビーに戻る（ルールを編集し直すため） */
-  backToLobby() {
+  async backToLobby() {
     clearTimeout(this.robTimer); clearTimeout(this.cutTimer); clearTimeout(this.showTimer); clearTimeout(this.cpuTimer); this.cpuTimer = null;
+    // セキュリティルール上、hands / msgs はフォルダごとは消せないので、プレイヤーごとに消す
+    const uids = new Set(this.G ? this.G.order : []);
+    try { const ps = (await get(ref(db, this.p('players')))).val() || {}; Object.keys(ps).forEach(u => uids.add(u)); } catch (_) { /* ignore */ }
     this.G = null; this.robScheduled = this.cutScheduled = this.showScheduled = -1;
-    const upd = {}; ['pub', 'private', 'hands', 'actions', 'msgs'].forEach(k => { upd[this.p(k)] = null; }); upd[this.p('meta/status')] = 'lobby';
+    const upd = {};
+    upd[this.p('pub')] = null; upd[this.p('private')] = null; upd[this.p('meta/status')] = 'lobby';
+    uids.forEach(u => { upd[this.p('hands/' + u)] = null; upd[this.p('msgs/' + u)] = null; });
     return update(ref(db), upd);
   }
   handle(a) {

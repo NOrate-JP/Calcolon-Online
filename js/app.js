@@ -7,7 +7,7 @@ const $ = s => document.querySelector(s);
 const S = {
   uid: null, name: localStorage.getItem('calc_name') || '', code: null, meta: null, players: {}, pub: null, hand: [], order: [], mode: 'N',
   host: null, unsubs: [], sel: null, modal: null, tsel: { give: [], take: [] }, tkey: '', seenEv: -1, prevHand: null, prevTop: null,
-  robSeen: -1, robStart: 0, robbed: -1, cutSeen: -1, lockRev: null, logOpen: false, bannerAt: 0, drag: null, flyQ: [], flip: false, revSeen: new Set(), imgsReady: false,
+  robSeen: -1, robStart: 0, robbed: -1, cutSeen: -1, lockRev: null, logOpen: false, bannerAt: 0, drag: null, flyQ: [], flip: false, revAt: new Map(), imgsReady: false,
   opts: Object.assign({ waits: false, current: false }, JSON.parse(localStorage.getItem('calc_opts') || '{}'))
 };
 
@@ -81,7 +81,7 @@ async function removeCpu() {
 function sub(r, cb) { S.unsubs.push(FB.onValue(r, snap => cb(snap.val()))); }
 function enterRoom(code) {
   S.code = code; localStorage.setItem('calc_room', code);
-  S.pub = null; S.hand = []; S.order = []; S.mode = 'N'; S.seenEv = -1; S.cutSeen = -1; S.revSeen = new Set(); S.prevHand = null; S.prevTop = null; S.sel = null; S.modal = null;
+  S.pub = null; S.hand = []; S.order = []; S.mode = 'N'; S.seenEv = -1; S.cutSeen = -1; S.revAt = new Map(); S.prevHand = null; S.prevTop = null; S.sel = null; S.modal = null;
   const r = p => FB.ref(FB.db, `rooms/${code}/${p}`);
   sub(r('meta'), async v => {
     S.meta = v;
@@ -94,7 +94,7 @@ function enterRoom(code) {
   sub(r('players'), v => { S.players = v || {}; render(); });
   sub(r('pub'), v => {
     const prev = S.pub; S.pub = normPub(v);
-    if (!v) { S.seenEv = -1; S.cutSeen = -1; S.revSeen = new Set(); S.prevHand = null; S.prevTop = null; S.sel = null; if (S.modal && !['settings', 'deck'].includes(S.modal.type)) S.modal = null; render(); return; }
+    if (!v) { S.seenEv = -1; S.cutSeen = -1; S.revAt = new Map(); S.prevHand = null; S.prevTop = null; S.sel = null; if (S.modal && !['settings', 'deck'].includes(S.modal.type)) S.modal = null; render(); return; }
     onPub(prev); render();
   });
   sub(r('hands/' + S.uid), v => { S.hand = v ? (Array.isArray(v) ? v.filter(x => x != null) : Object.values(v)) : []; render(); });
@@ -180,6 +180,13 @@ function syncOrder() {
   S.order = S.order.filter(id => S.hand.includes(id));
   S.hand.forEach(id => { if (!S.order.includes(id)) S.order.push(id); });
 }
+/** モーダルを描き直しても、中のスクロール位置を保つ */
+function setModal(html) {
+  const box = $('#modal .mbox'), st = box ? box.scrollTop : 0, key = S.modal ? S.modal.type : '';
+  $('#modal').innerHTML = html;
+  const nb = $('#modal .mbox'); if (nb && st && key === S.lastModalKey) nb.scrollTop = st;
+  S.lastModalKey = key;
+}
 function render() {
   if (S.pd && S.pd.active) { S.pendingRender = true; return; }   // カードを掴んでいる間は描き直さない
   const app = $('#app');
@@ -188,7 +195,7 @@ function render() {
   const m = S.meta; if (!m) return;
   if (m.status === 'lobby' || !S.pub) {
     const keep = document.activeElement && document.activeElement.id;
-    app.className = ''; app.innerHTML = lobbyHTML(S); $('#modal').innerHTML = S.modal && ['settings', 'deck'].includes(S.modal.type) ? modalHTML(S) : '';
+    app.className = ''; app.innerHTML = lobbyHTML(S); setModal(S.modal && ['settings', 'deck'].includes(S.modal.type) ? modalHTML(S) : '');
     if (keep && $('#' + keep)) $('#' + keep).focus();
     return;
   }
@@ -197,12 +204,13 @@ function render() {
   const before = S.flip ? captureHand() : null; S.flip = false;
   app.className = 'ingame';
   app.innerHTML = gameHTML(S);
-  $('#modal').innerHTML = modalHTML(S);
+  setModal(modalHTML(S));
   if (before) playFlip(before);
   S.prevHand = new Set(S.hand);
   const P = S.pub;
-  if (P.shownInfo) Object.keys(P.shownInfo).forEach(u => S.revSeen.add(P.duel + ':' + u));
-  if (P.step === 'reveal' && P.show) P.show.list.forEach(u => S.revSeen.add(P.duel + ':' + u)); S.prevTop = P.discardCount + '-' + (P.discardTop[P.discardTop.length - 1] ?? 'x');
+  const now = Date.now(), mark = u => { const k = P.duel + ':' + u; if (!S.revAt.has(k)) S.revAt.set(k, now); };
+  if (P.shownInfo) Object.keys(P.shownInfo).forEach(mark);
+  if (P.step === 'reveal' && P.show) P.show.list.forEach(mark); S.prevTop = P.discardCount + '-' + (P.discardTop[P.discardTop.length - 1] ?? 'x');
   runFly();
 }
 

@@ -304,18 +304,19 @@ export function resultHTML(S) {
       let backs = ''; for (let i = 0; i < (P.handCounts[u] || 0); i++) backs += backHTML('', '');
       return `<div class="rrow waiting"><div class="rwho">${who}</div><div class="rcards">${backs}</div><div class="rinfo"><div class="rform muted">…</div></div></div>`;
     }
-    const anim = S.revSeen && S.revSeen.has(P.duel + ':' + u) ? 'static' : 'flip';
+    const anim = 'flip';
+    const rk = P.duel + ':' + u, el = S.revAt && S.revAt.has(rk) ? Math.max(0, Date.now() - S.revAt.get(rk)) : 0;   // 公開してからの経過時間（描き直しても続きから再生）
     const ids = info.ids.length === P.formulaLen ? info.ids : info.hand;
     const cs = formulaCards(ids, info.mode, anim, P.formulaLen);
     const bowTxt = info.bows ? `<small>ボウ×${info.bows}</small>` : '';
     const burst = info.value == null;
     if (!final) {
       const stamp = burst ? `<div class="rstamp ${info.devil ? 'dev' : ''} ${anim}">${info.devil ? 'DEVIL BURST' : 'BURST'}</div>` : `<div class="rval ${anim}">${info.value}<small>点</small></div>`;
-      return `<div class="rrow shown ${burst ? 'isburst' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards c${ids.length + (info.mode && info.mode !== 'N' && ids.length === P.formulaLen ? 2 : 0)}">${cs}</div><div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div>${stamp}</div></div>`;
+      return `<div class="rrow shown ${burst ? 'isburst' : ''}" style="--el:${el}ms"><div class="rwho">${who}${bowTxt}</div><div class="rcards c${ids.length + (info.mode && info.mode !== 'N' && ids.length === P.formulaLen ? 2 : 0)}">${cs}</div><div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div>${stamp}</div></div>`;
     }
     const [lab, cl] = STATUS[info.status];
     const win = R.winners.includes(u);
-    return `<div class="rrow ${win ? 'winner' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards c${ids.length + (info.mode && info.mode !== 'N' && ids.length === P.formulaLen ? 2 : 0)}">${cs}</div>
+    return `<div class="rrow ${win ? 'winner' : ''}" style="--el:${el}ms"><div class="rwho">${who}${bowTxt}</div><div class="rcards c${ids.length + (info.mode && info.mode !== 'N' && ids.length === P.formulaLen ? 2 : 0)}">${cs}</div>
       <div class="rinfo"><div class="rform">${burst ? esc(info.calc || '式を作れず') : esc(info.text) + ' ＝ ' + info.value}</div><div class="rst ${cl}">${lab}${info.rebellion ? ' ・次回リベリオン🚩' : ''}</div>
       <div class="rdelta ${info.delta < 0 ? 'neg' : ''}">${info.delta > 0 ? '+' : ''}${info.delta}<small>計 ${info.total}</small></div>${info.note ? `<div class="rnote">${esc(info.note)}</div>` : ''}</div></div>`;
   }).join('');

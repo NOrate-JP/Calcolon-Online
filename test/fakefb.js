@@ -23,14 +23,21 @@ function notify() {
     else { const o = getAt(l.path) || {}; Object.keys(o).forEach(k => { if (!l.seen.has(k)) { l.seen.add(k); setTimeout(() => l.cb(snap(l.path + '/' + k, o[k])), 0); } }); }
   });
 }
+// database.rules.json と同じ「書き込みできる単位」だけを許可する（それより上のフォルダをまとめて書き換えると拒否）
+const WRITABLE = ['rooms/*/meta', 'rooms/*/players/*', 'rooms/*/pub', 'rooms/*/hands/*', 'rooms/*/private', 'rooms/*/actions/*', 'rooms/*/msgs/*'].map(p => p.split('/'));
+function writable(path) {
+  const ks = parts(path);
+  return WRITABLE.some(w => ks.length >= w.length && w.every((seg, i) => seg === '*' || seg === ks[i]));
+}
+function check(paths) { const bad = paths.filter(p => !writable(p)); if (bad.length) { const e = new Error('PERMISSION_DENIED: ' + bad.join(', ')); window.__denied = (window.__denied || []).concat(bad); throw e; } }
 export const configured = true;
 export const auth = {}; export const db = {};
 export const ref = (d, path = '') => ({ path });
-export const set = async (r, v) => { setAt(r.path, v); notify(); };
-export const update = async (r, obj) => { for (const k in obj) setAt((r.path ? r.path + '/' : '') + k, obj[k]); notify(); };
+export const set = async (r, v) => { check([r.path]); setAt(r.path, v); notify(); };
+export const update = async (r, obj) => { check(Object.keys(obj).map(k => (r.path ? r.path + '/' : '') + k)); for (const k in obj) setAt((r.path ? r.path + '/' : '') + k, obj[k]); notify(); };
 export const get = async r => snap(r.path, getAt(r.path));
-export const remove = async r => { setAt(r.path, null); notify(); };
-export const push = async (r, v) => { const k = 'k' + Date.now() + Math.random().toString(36).slice(2, 6); setAt(r.path + '/' + k, v); notify(); return { path: r.path + '/' + k }; };
+export const remove = async r => { check([r.path]); setAt(r.path, null); notify(); };
+export const push = async (r, v) => { check([r.path + '/x']); const k = 'k' + Date.now() + Math.random().toString(36).slice(2, 6); setAt(r.path + '/' + k, v); notify(); return { path: r.path + '/' + k }; };
 export const onValue = (r, cb) => { const l = { type: 'value', path: r.path, cb, last: undefined }; listeners.push(l); notify(); return () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1); }; };
 export const onChildAdded = (r, cb) => { const l = { type: 'child', path: r.path, cb, seen: new Set() }; listeners.push(l); notify(); return () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1); }; };
 export const onAuthStateChanged = (a, cb) => { setTimeout(() => cb({ uid: 'me' }), 0); return () => {}; };

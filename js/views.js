@@ -239,7 +239,7 @@ function handRowHTML(S) {
   let out = '';
   o.forEach((id, i) => {
     if (sp && i === 2 * sp[0]) out += paren('(');
-    out += cardHTML(id, `pick ${sel === id ? 'sel ' : ''}${S.prevHand && !S.prevHand.has(id) ? 'enter ' : ''}${id === DEVIL_ID ? 'devilhand ' : ''}`, 'draggable="true"');
+    out += cardHTML(id, `pick ${sel === id ? 'sel ' : ''}${S.prevHand && !S.prevHand.has(id) ? 'enter ' : ''}${id === DEVIL_ID ? 'devilhand ' : ''}`, '');
     if (sp && i === 2 * sp[1]) out += paren(')');
   });
   return out;

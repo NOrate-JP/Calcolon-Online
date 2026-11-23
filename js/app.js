@@ -177,6 +177,7 @@ function syncOrder() {
   S.hand.forEach(id => { if (!S.order.includes(id)) S.order.push(id); });
 }
 function render() {
+  if (S.pd && S.pd.active) { S.pendingRender = true; return; }   // カードを掴んでいる間は描き直さない
   const app = $('#app');
   if (!S.uid) { app.innerHTML = ''; return; }
   if (!S.code) { if (!app.querySelector('#in-name')) { app.className = ''; app.innerHTML = titleHTML(S); } $('#modal').innerHTML = ''; return; }
@@ -263,6 +264,7 @@ function act(name, el) {
   }
 }
 document.addEventListener('click', e => {
+  if (S.suppressClick) { S.suppressClick = false; return; }
   const c = e.target.closest('[data-act].card');
   if (c) { act(c.dataset.act, c); return; }
   const b = e.target.closest('[data-act]');
@@ -270,36 +272,76 @@ document.addEventListener('click', e => {
   const h = e.target.closest('.hand .card');
   if (h && S.pub) { const id = +h.dataset.id; S.sel = S.sel === id ? null : id; render(); }
 });
-// 手札のドラッグ並べ替え（PC）。ドラッグ中にカードがリアルタイムで入れ替わる。スマホは ◀ ▶ ボタンで並べ替え
-document.addEventListener('dragstart', e => {
+// ---------- 手札の並べ替え（ゲーム風：掴んだカードが指に付いてきて、他のカードが隙間を空ける） ----------
+// 並び位置は掴んだ瞬間のスロット位置を基準に計算するので、境目でカードが行ったり来たりしない。マウス・タッチ共通
+const DRAG_START_PX = 6;
+document.addEventListener('pointerdown', e => {
+  if (e.button !== 0 && e.pointerType === 'mouse') return;
   const c = e.target.closest && e.target.closest('.hand .card'); if (!c) return;
-  S.drag = +c.dataset.id; e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(S.drag));
-  setTimeout(() => c.classList.add('dragging'), 0);
+  S.pd = { id: +c.dataset.id, el: c, x0: e.clientX, y0: e.clientY, pid: e.pointerId, active: false };
 });
-document.addEventListener('dragover', e => {
-  if (S.drag == null) return;
-  const hand = e.target.closest && e.target.closest('.hand'); if (!hand) return;
-  e.preventDefault();
-  const t = e.target.closest('.hand .card'); if (!t) return;
-  const tid = +t.dataset.id; if (tid === S.drag) return;
-  const o = S.order, from = o.indexOf(S.drag), to = o.indexOf(tid); if (from < 0 || to < 0) return;
+function beginDrag(e) {
+  const pd = S.pd, hand = pd.el.closest('.hand');
   const cards = [...hand.querySelectorAll('.card')];
-  const before = new Map(cards.map(c => [c, c.getBoundingClientRect().left]));
-  o.splice(from, 1); o.splice(to, 0, S.drag);
-  const el = hand.querySelector(`.card[data-id="${S.drag}"]`); if (!el) return;
-  if (from < to) t.after(el); else t.before(el);
-  cards.forEach(c => {
-    if (c === el) return;
-    const dx = before.get(c) - c.getBoundingClientRect().left;
-    if (Math.abs(dx) > 1) c.animate([{ transform: `translateX(${dx}px)` }, { transform: 'translateX(0)' }], { duration: 180, easing: 'ease-out' });
-  });
-});
-document.addEventListener('drop', e => { if (S.drag != null) e.preventDefault(); });
-document.addEventListener('dragend', () => {
-  const was = S.drag != null; S.drag = null; S.sel = null;
-  document.querySelectorAll('.dragging').forEach(c => c.classList.remove('dragging'));
-  if (was) render();
-});
+  pd.hand = hand; pd.cards = cards;
+  pd.ids = cards.map(c => +c.dataset.id);
+  pd.slots = cards.map(c => { const r = c.getBoundingClientRect(); return r.left + r.width / 2; });   // 各スロットの中心X（固定）
+  pd.from = pd.ids.indexOf(pd.id); pd.to = pd.from;
+  pd.lastX = e.clientX; pd.tilt = 0; pd.active = true;
+  if (S.sel != null) { S.sel = null; cards.forEach(c => c.classList.remove('sel')); }
+  hand.classList.add('dragmode'); pd.el.classList.add('lifted');
+  try { pd.el.setPointerCapture(pd.pid); } catch (_) { /* ignore */ }
+}
+function layoutDrag() {
+  const pd = S.pd, n = pd.ids.length;
+  // 掴んだカード以外を、新しい並びのスロットへずらす
+  let k = 0;
+  for (let j = 0; j < n; j++) {
+    if (j === pd.from) continue;
+    if (k === pd.to) k++;
+    const dx = pd.slots[k] - pd.slots[j];
+    pd.cards[j].style.transform = dx ? `translateX(${dx}px)` : '';
+    k++;
+  }
+}
+document.addEventListener('pointermove', e => {
+  const pd = S.pd; if (!pd || e.pointerId !== pd.pid) return;
+  if (!pd.active) {
+    if (Math.hypot(e.clientX - pd.x0, e.clientY - pd.y0) < DRAG_START_PX) return;
+    beginDrag(e);
+  }
+  e.preventDefault();
+  const dx = e.clientX - pd.x0, dy = e.clientY - pd.y0;
+  // 動かした方向へ少し傾ける
+  pd.tilt = Math.max(-14, Math.min(14, pd.tilt * 0.7 + (e.clientX - pd.lastX) * 0.9)); pd.lastX = e.clientX;
+  pd.el.style.transform = `translate(${dx}px, ${Math.min(dy, 30) - 26}px) scale(1.12) rotate(${pd.tilt.toFixed(1)}deg)`;
+  // 指の位置から入る場所を決める（基準のスロットは動かさない）
+  const x = e.clientX; let to = 0;
+  for (let j = 0; j < pd.slots.length; j++) { if (j === pd.from) continue; if (x > pd.slots[j]) to++; }
+  if (to !== pd.to) { pd.to = to; layoutDrag(); }
+}, { passive: false });
+function endDrag(e, cancel) {
+  const pd = S.pd; if (!pd || (e && e.pointerId !== pd.pid)) return;
+  S.pd = null;
+  if (!pd.active) return;                     // ただのクリック → 選択はclickで処理
+  S.suppressClick = true; setTimeout(() => { S.suppressClick = false; }, 0);
+  const to = cancel ? pd.from : pd.to;
+  // 掴んだカードを隙間へパチッと収める
+  pd.el.classList.remove('lifted'); pd.el.classList.add('settle');
+  pd.el.style.transform = `translateX(${pd.slots[to] - pd.slots[pd.from]}px)`;
+  if (cancel) pd.cards.forEach((c, j) => { if (j !== pd.from) c.style.transform = ''; });
+  setTimeout(() => {
+    if (!cancel && to !== pd.from) {
+      const ids = pd.ids.slice(); ids.splice(pd.from, 1); ids.splice(to, 0, pd.id);
+      // 並べ替えたのは手札の一部（括弧以外のカード）なので、その順で S.order を作り直す
+      S.order = ids.concat(S.order.filter(i => !ids.includes(i)));
+    }
+    S.pendingRender = false; render();
+  }, 150);
+}
+document.addEventListener('pointerup', e => endDrag(e, false));
+document.addEventListener('pointercancel', e => endDrag(e, true));
+document.addEventListener('dragstart', e => { if (e.target.closest && e.target.closest('.hand')) e.preventDefault(); });   // ブラウザ標準の画像ドラッグを止める
 document.addEventListener('change', e => {
   if (e.target.dataset && e.target.dataset.opt) { S.opts[e.target.dataset.opt] = e.target.checked; localStorage.setItem('calc_opts', JSON.stringify(S.opts)); render(); return; }
   if (!S.meta || S.meta.hostUid !== S.uid) return;

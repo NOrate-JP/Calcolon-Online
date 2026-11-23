@@ -1,5 +1,5 @@
 // 画面のHTML文字列を作る関数群（DOM/Firebase非依存）
-import { CARDS, DEVIL_ID, cardKey, keyLabel, sortRank, solveBest, evalOrdered, FLAME_KEYS, OP_SYM, OP_JP } from './engine.js';
+import { CARDS, DEVIL_ID, cardKey, keyLabel, sortRank, solveBest, evalOrdered, spanOf, modesFor, FLAME_KEYS, OP_SYM, OP_JP } from './engine.js';
 
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -10,7 +10,7 @@ export function normPub(P) {
   P.log = P.log || []; P.events = P.events || []; P.discardTop = P.discardTop || [];
   P.devil = P.devil || { holder: null, pushed: false, idx: -1 };
   P.rebellion = P.rebellion || {}; P.bows = P.bows || {}; P.handCounts = P.handCounts || {}; P.scores = P.scores || {};
-  P.order = P.order || []; P.names = P.names || {}; P.shownInfo = P.shownInfo || {};
+  P.order = P.order || []; P.names = P.names || {}; P.shownInfo = P.shownInfo || {}; P.formulaLen = P.formulaLen || 5;
   if (P.show) P.show.shown = P.show.shown || [];
   Object.values(P.shownInfo).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
   if (P.result && P.result.per) Object.values(P.result.per).forEach(r => { r.hand = r.hand || []; r.ids = r.ids || []; });
@@ -44,7 +44,7 @@ function bowsHTML(P, u) {
 }
 const sortedHand = h => [...h].sort((a, b) => sortRank(a) - sortRank(b) || a - b);
 const nm = (P, u) => esc(P.names[u] || '???');
-export const modeOf = S => ((S.pub.bows[S.uid] || 0) >= 2 ? (S.mode || 'N') : 'N');
+export const modeOf = S => ((S.pub.bows[S.uid] || 0) >= 2 && modesFor(S.pub.formulaLen || 5).includes(S.mode) ? S.mode : 'N');
 /** 今、自分が「捨てるカード」を選べる状況か */
 export function canDiscard(S) {
   const P = S.pub, me = S.uid;
@@ -56,7 +56,7 @@ export function canDiscard(S) {
 /** 自分の並びがコンプリートか */
 export function myFormula(S) {
   const P = S.pub, me = S.uid;
-  if (S.order.length !== 5) return null;
+  if (S.order.length !== (P.formulaLen || 5)) return null;
   return evalOrdered(S.order, P.bows[me] || 0, !!P.rebellion[me], modeOf(S));
 }
 export function tradeNFor(P, hand, target, want, excludeId) {
@@ -116,9 +116,10 @@ export function lobbyHTML(S) {
   const settings = isHost ? `<div class="btnrow"><button class="btn mini" data-act="addcpu" ${ps.length >= 4 ? 'disabled' : ''}>＋ CPUを追加</button><button class="btn mini ghost" data-act="rmcpu" ${cpus ? '' : 'disabled'}>－ CPUを外す</button></div>
     <div class="settings">
     <label>デュエル数<select id="sel-duels">${opt([1, 2, 3, 5, 7, 10], m.totalDuels, x => x + '回')}</select></label>
-    <label>ロブ猶予<select id="sel-rob">${opt([2000, 3000, 3500, 5000, 8000], m.robMs, x => (x / 1000) + '秒')}</select></label></div>
+    <label>ロブ猶予<select id="sel-rob">${opt([2000, 3000, 3500, 5000, 8000], m.robMs, x => (x / 1000) + '秒')}</select></label>
+    <label class="span2">ルール<select id="sel-final"><option value="0" ${m.finalRule ? '' : 'selected'}>通常（手札4枚・式5枚）</option><option value="1" ${m.finalRule ? 'selected' : ''}>決勝ルール（2人専用・手札6枚・式7枚）</option></select></label></div>
     <button class="btn gold" data-act="start" ${ps.length < 2 ? 'disabled' : ''}>ゲーム開始（${Math.min(ps.length, 4)}人）</button>` : `<p class="wait">ホストの開始を待っています…</p>
-    <p class="muted">デュエル数 ${m.totalDuels}回 / ロブ猶予 ${(m.robMs / 1000)}秒</p>`;
+    <p class="muted">デュエル数 ${m.totalDuels}回 / ロブ猶予 ${(m.robMs / 1000)}秒 / ${m.finalRule ? '決勝ルール' : '通常ルール'}</p>`;
   return `<div class="title-screen"><div class="logo-mid">Calcolon</div><div class="panel">
     <div class="codebox">部屋コード<strong>${esc(S.code)}</strong></div>
     <ul class="plist">${list}</ul>
@@ -166,9 +167,9 @@ export function controlsHTML(S) {
   if (P.phase !== 'duel') return '';
   // 並べ替え（いつでも）
   if (S.sel != null && my.includes(S.sel)) tools += '<button class="btn mini" data-act="mvl" title="左へ">◀</button><button class="btn mini" data-act="mvr" title="右へ">▶</button>';
-  if ((P.bows[me] || 0) >= 2 && my.length === 5) {
+  if ((P.bows[me] || 0) >= 2 && my.length === P.formulaLen) {
     const m = modeOf(S);
-    tools += `<span class="sep"></span><span class="tl">括弧</span>` + [['N', 'なし'], ['L', '( 1〜3 )'], ['R', '( 3〜5 )']].map(([k, l]) => `<button class="btn mini ${m === k ? 'gold' : 'ghost'}" data-act="mode" data-m="${k}">${l}</button>`).join('');
+    tools += `<span class="sep"></span><span class="tl">括弧</span>` + modesFor(P.formulaLen).map(k => { const sp = spanOf(k); const l = k === 'N' ? 'なし' : `( ${2 * sp[0] + 1}〜${2 * sp[1] + 1} )`; return `<button class="btn mini ${m === k ? 'gold' : 'ghost'}" data-act="mode" data-m="${k}">${l}</button>`; }).join('');
   }
   const f = myFormula(S);
   if (P.step === 'draw' && P.turn === me) {
@@ -203,13 +204,13 @@ export function controlsHTML(S) {
 }
 
 function handRowHTML(S) {
-  const P = S.pub; const o = S.order, m = modeOf(S), sel = S.sel;
+  const P = S.pub; const o = S.order, m = modeOf(S), sel = S.sel, sp = o.length === P.formulaLen ? spanOf(m) : null;
   const paren = c => `<span class="paren">${c}</span>`;
   let out = '';
   o.forEach((id, i) => {
-    if (o.length === 5 && ((m === 'L' && i === 0) || (m === 'R' && i === 2))) out += paren('(');
+    if (sp && i === 2 * sp[0]) out += paren('(');
     out += cardHTML(id, `pick ${sel === id ? 'sel ' : ''}${S.prevHand && !S.prevHand.has(id) ? 'enter ' : ''}${id === DEVIL_ID ? 'devilhand ' : ''}`, 'draggable="true"');
-    if (o.length === 5 && ((m === 'L' && i === 2) || (m === 'R' && i === 4))) out += paren(')');
+    if (sp && i === 2 * sp[1]) out += paren(')');
   });
   return out;
 }
@@ -222,18 +223,18 @@ export function gameHTML(S) {
   return `<div class="topbar"><span class="logo-s">Calcolon</span><span class="duel">DUEL ${P.duel}/${P.totalDuels}</span><span class="chips">${chips}</span><span class="room">${esc(S.code)}</span><button class="btn mini" data-act="leave">退出</button></div>
   <div class="scene"><div class="table">${pilesHTML(S)}</div>${seats}</div>
   <div class="logbox ${S.logOpen ? 'open' : ''}" data-act="log">${logs}</div>
-  <div class="me" data-uid="${esc(me)}"><div class="statusline">${statusText(S)}</div>${plate(S, me)}<div class="ctl">${controlsHTML(S)}</div><div class="hand">${handRowHTML(S)}</div><div class="rackbar"></div><div class="bowfield">${bowsHTML(P, me)}</div></div>
+  <div class="me" data-uid="${esc(me)}"><div class="statusline">${statusText(S)}</div>${plate(S, me)}<div class="ctl">${controlsHTML(S)}</div><div class="hand n${S.order.length}">${handRowHTML(S)}</div><div class="rackbar"></div><div class="bowfield">${bowsHTML(P, me)}</div></div>
   ${(P.step === 'showdown' || P.step === 'reveal' || P.phase === 'end') ? resultHTML(S) : ''}`;
 }
 
 // ---------- 手札公開（ショーダウン）と結果 ----------
 const STATUS = { win: ['勝利', 'st-win'], complete: ['コンプリート（0点）', 'st-comp'], kingkill: ['キングキリング', 'st-kk'], burst: ['バースト', 'st-burst'], devilburst: ['デビルバースト', 'st-db'] };
-function formulaCards(ids, mode, anim, ri) {
-  const L = mode === 'L', Rr = mode === 'R'; let cs = '';
+function formulaCards(ids, mode, anim, len) {
+  const sp = ids.length === len ? spanOf(mode) : null; let cs = '';
   ids.forEach((id, i) => {
-    if (ids.length === 5 && ((L && i === 0) || (Rr && i === 2))) cs += '<span class="paren s">(</span>';
+    if (sp && i === 2 * sp[0]) cs += '<span class="paren s">(</span>';
     cs += cardHTML(id, anim, `style="--d:${(i * 0.12).toFixed(2)}s"`);
-    if (ids.length === 5 && ((L && i === 2) || (Rr && i === 4))) cs += '<span class="paren s">)</span>';
+    if (sp && i === 2 * sp[1]) cs += '<span class="paren s">)</span>';
   });
   return cs;
 }
@@ -256,8 +257,8 @@ export function resultHTML(S) {
       return `<div class="rrow waiting"><div class="rwho">${who}</div><div class="rcards">${backs}</div><div class="rinfo"><div class="rform muted">…</div></div></div>`;
     }
     const anim = S.revSeen && S.revSeen.has(P.duel + ':' + u) ? 'static' : 'flip';
-    const ids = info.ids.length === 5 ? info.ids : info.hand;
-    const cs = formulaCards(ids, info.mode, anim);
+    const ids = info.ids.length === P.formulaLen ? info.ids : info.hand;
+    const cs = formulaCards(ids, info.mode, anim, P.formulaLen);
     const bowTxt = info.bows ? `<small>ボウ×${info.bows}</small>` : '';
     const burst = info.value == null;
     if (!final) {
@@ -268,7 +269,7 @@ export function resultHTML(S) {
     const win = R.winners.includes(u);
     return `<div class="rrow ${win ? 'winner' : ''}"><div class="rwho">${who}${bowTxt}</div><div class="rcards">${cs}</div>
       <div class="rinfo"><div class="rform">${burst ? '式を作れず' : esc(info.text) + ' ＝ ' + info.value}</div><div class="rst ${cl}">${lab}${info.rebellion ? ' ・次回リベリオン🚩' : ''}</div>
-      <div class="rdelta ${info.delta < 0 ? 'neg' : ''}">${info.delta > 0 ? '+' : ''}${info.delta}<small>計 ${info.total}</small></div></div></div>`;
+      <div class="rdelta ${info.delta < 0 ? 'neg' : ''}">${info.delta > 0 ? '+' : ''}${info.delta}<small>計 ${info.total}</small></div>${info.note ? `<div class="rnote">${esc(info.note)}</div>` : ''}</div></div>`;
   }).join('');
   const btn = final ? `<div class="btnrow">${isHost ? `<button class="btn gold" data-act="next">${P.duel >= P.totalDuels ? '最終結果へ' : '次のデュエルへ'}</button>` : '<span class="note">ホストが進めるのを待っています…</span>'}</div>` : '';
   return `<div class="result ${final ? '' : 'showdown'}"><div class="rbox"><h2>${final ? 'DUEL ' + P.duel + ' RESULT' : 'SHOWDOWN'}</h2>${rows}${btn}</div></div>`;

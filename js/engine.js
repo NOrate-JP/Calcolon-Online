@@ -77,45 +77,89 @@ function opVars(c, rebel) {
   return r;
 }
 
+/** 括弧の範囲。'N'=なし / 'i-j'=i番目〜j番目の数字を括る（旧表記 L=0-1, R=1-2） */
+export function spanOf(m) {
+  if (m === 'L') return [0, 1]; if (m === 'R') return [1, 2];
+  return (m && /^\d-\d$/.test(m)) ? [Number(m[0]), Number(m[2])] : null;
+}
+/** 式の長さ（5 or 7）で選べる括弧モード */
+export function modesFor(len) {
+  const n = (len + 1) / 2, out = ['N'];
+  for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (!(i === 0 && j === n - 1)) out.push(`${i}-${j}`);
+  return out;
+}
+function evalFlat(nums, ops) {            // 掛け算・割り算が先
+  const ns = [nums[0]], os = [];
+  for (let k = 0; k < ops.length; k++) {
+    const o = ops[k];
+    if (o === 'x' || o === '/') { const r = ap(o, ns.pop(), nums[k + 1]); if (!r) return null; ns.push(r); }
+    else { os.push(o); ns.push(nums[k + 1]); }
+  }
+  let r = ns[0];
+  for (let k = 0; k < os.length; k++) r = ap(os[k], r, ns[k + 1]);
+  return r;
+}
+function evalSpan(nums, ops, span) {
+  if (!span) return evalFlat(nums, ops);
+  const [i, j] = span;
+  const inner = evalFlat(nums.slice(i, j + 1), ops.slice(i, j)); if (!inner) return null;
+  return evalFlat([...nums.slice(0, i), inner, ...nums.slice(j + 1)], [...ops.slice(0, i), ...ops.slice(j)]);
+}
+
 /**
- * 並べた順（数字・記号・数字・記号・数字）で評価する。
- * mode: 'N'=括弧なし / 'L'=(1〜3枚目) / 'R'=(3〜5枚目)（括弧はボウを2枚以上持っている時のみ）
- * 「下一桁0・整数・0以上」になる最大の結果を返す。なれなければ null
+ * 並べた順（数字・記号・数字・記号・数字［・記号・数字］）で評価する。
+ * 「下一桁0・整数・0以上」になる最大の結果を返す。なれなければ null。括弧はボウ2枚以上のとき
  */
 export function evalOrdered(ids, bows = 0, rebel = false, mode = 'N') {
-  if (!ids || ids.length !== 5) return null;
+  if (!ids || (ids.length !== 5 && ids.length !== 7)) return null;
   const cs = ids.map(i => CARDS[i]);
-  if (cs[0].kind !== 'num' || cs[1].kind !== 'op' || cs[2].kind !== 'num' || cs[3].kind !== 'op' || cs[4].kind !== 'num') return null;
-  if (mode !== 'N' && bows < 2) return null;
-  const nv = [cs[0], cs[2], cs[4]].map(c => numVars(c, rebel)), ov = [cs[1], cs[3]].map(c => opVars(c, rebel));
+  for (let k = 0; k < cs.length; k++) if (cs[k].kind !== (k % 2 === 0 ? 'num' : 'op')) return null;
+  let span = null;
+  if (mode !== 'N') { if (bows < 2 || !(modesFor(ids.length).includes(mode) || ((mode === 'L' || mode === 'R') && ids.length === 5))) return null; span = spanOf(mode); }
+  const pos = cs.map((c, k) => k % 2 === 0 ? numVars(c, rebel) : opVars(c, rebel));
+  const idx = pos.map(() => 0);
   let best = null;
-  for (const a of nv[0]) for (const b of nv[1]) for (const c of nv[2]) for (const o1 of ov[0]) for (const o2 of ov[1]) {
-    let r = null, t;
-    if (mode === 'L') { t = ap(o1.o, a.f, b.f); r = t && ap(o2.o, t, c.f); }
-    else if (mode === 'R') { t = ap(o2.o, b.f, c.f); r = t && ap(o1.o, a.f, t); }
-    else if ((o2.o === 'x' || o2.o === '/') && (o1.o === '+' || o1.o === '-')) { t = ap(o2.o, b.f, c.f); r = t && ap(o1.o, a.f, t); }
-    else { t = ap(o1.o, a.f, b.f); r = t && ap(o2.o, t, c.f); }
-    if (!r || r.d !== 1 || r.n < 0 || r.n % 10 !== 0) continue;
-    if (!best || r.n > best.value) {
-      const text = mode === 'L' ? `(${a.t} ${o1.t} ${b.t}) ${o2.t} ${c.t}` : mode === 'R' ? `${a.t} ${o1.t} (${b.t} ${o2.t} ${c.t})` : `${a.t} ${o1.t} ${b.t} ${o2.t} ${c.t}`;
-      best = { value: r.n, text, mode, ids: ids.slice() };
+  for (;;) {
+    const nums = [], ops = [], tx = [];
+    pos.forEach((v, k) => { const x = v[idx[k]]; if (k % 2 === 0) nums.push(x.f); else ops.push(x.o); tx.push(x.t); });
+    const r = evalSpan(nums, ops, span);
+    if (r && r.d === 1 && r.n >= 0 && r.n % 10 === 0 && (!best || r.n > best.value)) {
+      if (span) { tx[2 * span[0]] = '(' + tx[2 * span[0]]; tx[2 * span[1]] = tx[2 * span[1]] + ')'; }
+      best = { value: r.n, text: tx.join(' '), mode, ids: ids.slice() };
     }
+    let k = pos.length - 1;
+    while (k >= 0) { idx[k]++; if (idx[k] < pos[k].length) break; idx[k] = 0; k--; }
+    if (k < 0) break;
   }
   return best;
 }
 
-/** 手札(ちょうど5枚)をどう並べ替えても作れる最大の式（ロブ判定・CPU用）。作れなければ null */
+/** 手札(5枚 or 7枚)をどう並べ替えても作れる最大の式（ロブ判定・CPU用）。作れなければ null */
 export function solveBest(handIds, bows = 0, rebel = false) {
-  const cs = handIds.map(i => CARDS[i]);
+  const cs = handIds.map(i => CARDS[i]); const len = cs.length;
+  if (len !== 5 && len !== 7) return null;
   const nums = cs.filter(c => c.kind === 'num'), ops = cs.filter(c => c.kind === 'op');
-  if (cs.length !== 5 || nums.length !== 3 || ops.length !== 2) return null;
-  const modes = bows >= 2 ? ['N', 'L', 'R'] : ['N'];
+  if (nums.length !== (len + 1) / 2 || ops.length !== (len - 1) / 2) return null;
+  const modes = bows >= 2 ? modesFor(len) : ['N'];
   let best = null;
   for (const np of perms(nums)) for (const opp of perms(ops)) {
-    const ids = [np[0].id, opp[0].id, np[1].id, opp[1].id, np[2].id];
+    const ids = []; np.forEach((c, k) => { ids.push(c.id); if (k < opp.length) ids.push(opp[k].id); });
     for (const m of modes) { const r = evalOrdered(ids, bows, rebel, m); if (r && (!best || r.value > best.value)) best = r; }
   }
   return best;
+}
+
+/** 勝者の得点（最終デュエル2倍・0勝利・ダブルスコア）を per[u].delta に計算する。G.duel / totalDuels / zeroPending / prevWin を参照 */
+export function applyWinScores(G, per, winners) {
+  const isFinal = G.duel >= G.totalDuels, pend = G.zeroPending || [];
+  winners.forEach(u => {
+    const r = per[u]; const notes = []; let eff = r.value;
+    if (r.value === 0 && pend.includes(u)) { eff = 100; notes.push('0勝利の連続 → 100点換算'); }
+    const gain = isFinal ? eff * 2 : eff; if (isFinal) notes.push('最終デュエル×2');
+    let extra = 0; if (G.prevWin != null && eff > 0 && eff === G.prevWin) { extra = eff; notes.push(`ダブルスコア +${eff}`); }
+    let retro = 0; if (pend.includes(u)) { retro = eff; notes.push(`前回の0勝利にも +${eff}`); }
+    r.eff = eff; r.delta = gain + extra + retro; r.note = notes.join(' / ');
+  });
 }
 
 // ---------- ゲーム状態 ----------
@@ -131,6 +175,7 @@ const sameSet = (a, b) => a.length === b.length && [...a].sort((x, y) => x - y).
 export function createGame(hostUid, uids, names, opts = {}) {
   const G = {
     hostUid, order: uids.slice(), names: { ...names }, cpu: { ...(opts.cpu || {}) }, totalDuels: opts.totalDuels || 5, robMs: opts.robMs ?? 3500, cutMs: opts.cutMs ?? 2600,
+    formulaLen: opts.final && uids.length === 2 ? 7 : 5, zeroPending: [], prevWin: null,
     duel: 0, scores: {}, nextRebellion: {}, log: [], events: [], evSeq: 0, robSeq: 0, cutSeq: 0, showSeq: 0, rev: 0, lastWinner: null, phase: 'duel'
   };
   uids.forEach(u => { G.scores[u] = 0; });
@@ -141,7 +186,7 @@ export function createGame(hostUid, uids, names, opts = {}) {
 export function hydrate(G) {
   G.deck = G.deck || []; G.discard = G.discard || []; G.log = G.log || []; G.events = G.events || [];
   G.robReq = G.robReq || []; G.ldone = G.ldone || {}; G.confirmed = G.confirmed || {}; G.arr = G.arr || {};
-  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600; G.showSeq = G.showSeq || 0;
+  G.nextRebellion = G.nextRebellion || {}; G.cpu = G.cpu || {}; G.cutMs = G.cutMs || 2600; G.showSeq = G.showSeq || 0; G.formulaLen = G.formulaLen || 5; G.zeroPending = G.zeroPending || [];
   if (G.show) G.show.shown = G.show.shown || [];
   G.rebellion = G.rebellion || {}; G.bows = G.bows || {}; G.bowIds = G.bowIds || {}; G.hands = G.hands || {};
   G.order.forEach(u => { G.hands[u] = G.hands[u] || []; G.bowIds[u] = G.bowIds[u] || []; G.bows[u] = G.bowIds[u].length; });
@@ -155,7 +200,7 @@ export function startDuel(G, firstUid) {
   G.hands = {}; G.bows = {}; G.bowIds = {}; G.rebellion = {};
   G.devil = { holder: null, pushed: false };
   G.order.forEach(u => { G.hands[u] = []; G.bows[u] = 0; G.bowIds[u] = []; G.rebellion[u] = !!G.nextRebellion[u]; });
-  for (let i = 0; i < 4; i++) G.order.forEach(u => G.hands[u].push(G.deck.pop()));
+  for (let i = 0; i < G.formulaLen - 1; i++) G.order.forEach(u => G.hands[u].push(G.deck.pop()));
   G.nextRebellion = {}; G.king = null; G.step = 'draw'; G.turn = firstUid;
   G.lastDiscard = null; G.robReq = []; G.ldone = {}; G.confirmed = {}; G.arr = {}; G.trade = null; G.cutKind = null; G.show = null; G.devilDisc = null;
   G.result = null; G.skipNext = false;
@@ -220,13 +265,14 @@ function startShowdown(G) {
   const winners = top.includes(G.king) ? [G.king] : top;
   G.order.forEach(u => {
     const r = per[u];
-    if (winners.includes(u)) { r.status = 'win'; r.delta = r.value; }
+    if (winners.includes(u)) { r.status = 'win'; r.delta = 0; }
     else if (r.value != null) { if (u === G.king) { r.status = 'kingkill'; r.delta = -30; } else { r.status = 'complete'; r.delta = 0; } }
     else if (r.hasDevil) { r.status = 'devilburst'; r.delta = -100; }
     else { r.status = 'burst'; r.delta = -10; }
-    r.total = G.scores[u] + r.delta;
     if (r.status === 'win' && r.hasDevil) r.rebellion = true;
   });
+  applyWinScores(G, per, winners);
+  G.order.forEach(u => { per[u].total = G.scores[u] + per[u].delta; });
   G.result = { per, winners, king: G.king, max };
   const list = [G.king]; for (let k = 1; k < G.order.length; k++) list.push(nextOf(G, G.king, k));
   G.show = { list, shown: [] }; G.step = 'showdown'; G.showSeq++;
@@ -248,7 +294,7 @@ export function advanceShowdown(G) {
 function finalizeShowdown(G) {
   const { per, winners, max } = G.result;
   G.order.forEach(u => { G.scores[u] += per[u].delta; per[u].total = G.scores[u]; if (per[u].rebellion) G.nextRebellion[u] = true; });
-  G.lastWinner = winners[0]; G.step = 'reveal';
+  G.lastWinner = winners[0]; G.prevWin = per[winners[0]].eff; G.zeroPending = winners.filter(u => per[u].eff === 0); G.step = 'reveal';
   ev(G, 'reveal', `結果発表！ 勝者: ${winners.map(u => nm(G, u)).join('、')}（${max}点）`);
   G.order.forEach(u => {
     if (per[u].status === 'kingkill') ev(G, 'kingkill', `${nm(G, u)}はキングキリング！ -30点`, u);
@@ -280,7 +326,7 @@ function reduceInner(G, a, uid, mine) {
   switch (a.t) {
     case 'draw': {
       if (G.phase !== 'duel' || G.step !== 'draw' || G.turn !== uid) return ERR('今はドローできません');
-      const short = mine.length <= 3;
+      const short = mine.length <= G.formulaLen - 2;
       const c = drawCard(G); if (c == null) return ERR('山札がありません');
       mine.push(c); say(G, `${nm(G, uid)}がドロー`);
       if (short) endTurn(G); else G.step = 'act';
@@ -352,7 +398,7 @@ function reduceInner(G, a, uid, mine) {
     case 'lastConfirm': {
       if (G.phase !== 'duel' || G.step !== 'lastdraw' || uid === G.king || !G.ldone[uid] || G.confirmed[uid]) return ERR('今は確定できません');
       if (!Array.isArray(a.order) || !sameSet(a.order, mine)) return ERR('手札の並びが不正です');
-      G.hands[uid] = a.order.slice(); G.arr[uid] = { ids: a.order.slice(), mode: ['N', 'L', 'R'].includes(a.mode) ? a.mode : 'N' };
+      G.hands[uid] = a.order.slice(); G.arr[uid] = { ids: a.order.slice(), mode: modesFor(G.formulaLen).includes(a.mode) ? a.mode : 'N' };
       G.confirmed[uid] = true; say(G, `${nm(G, uid)}が手札を確定した`);
       maybeReveal(G);
       return OK;
@@ -366,7 +412,7 @@ function reduceInner(G, a, uid, mine) {
     }
     case 'rematch': {
       if (uid !== G.hostUid || G.phase !== 'end') return ERR('今はできません');
-      G.duel = 0; G.order.forEach(u => { G.scores[u] = 0; }); G.nextRebellion = {};
+      G.duel = 0; G.order.forEach(u => { G.scores[u] = 0; }); G.nextRebellion = {}; G.zeroPending = []; G.prevWin = null;
       startDuel(G, G.order[rnd(G.order.length)]); return OK;
     }
   }
@@ -449,7 +495,7 @@ export function publicView(G) {
   const shownInfo = {};
   if (G.show && G.result) G.show.shown.forEach(u => { const r = G.result.per[u]; shownInfo[u] = { hand: r.hand, ids: r.ids, text: r.text, value: r.value, mode: r.mode, bows: r.bows, devil: r.hasDevil }; });
   return {
-    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
+    phase: G.phase, duel: G.duel, totalDuels: G.totalDuels, formulaLen: G.formulaLen, order: G.order, names: G.names, cpu: G.cpu, hostUid: G.hostUid,
     turn: G.turn, step: G.step, deckCount: G.deck.length, discardCount: G.discard.length, discardTop: G.discard.slice(-3),
     lastDiscard: G.lastDiscard || null, handCounts, bows: G.bows,
     devil: { holder: shown ? dv.holder : null, pushed: !!dv.pushed, idx: shown ? G.hands[dv.holder].indexOf(DEVIL_ID) : -1 },

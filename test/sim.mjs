@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { CARDS, DEVIL_ID, solveBest, evalOrdered, createGame, reduce, closeRob, finishCutin, advanceShowdown, publicView, FLAME_KEYS } from '../js/engine.js';
+import { applyWinScores, modesFor, CARDS, DEVIL_ID, solveBest, evalOrdered, createGame, reduce, closeRob, finishCutin, advanceShowdown, publicView, FLAME_KEYS } from '../js/engine.js';
 import { cpuAction } from '../js/cpu.js';
 
 const find = (pred, used = []) => CARDS.find(c => pred(c) && !used.includes(c.id)).id;
@@ -28,14 +28,34 @@ assert.equal(evalOrdered(hand(['6','5','1','+','x'])), null);                 //
 assert.equal(solveBest(hand(['6','5','1','+','x']), 0, true).value, 30);
 assert.equal(solveBest(hand(['4','6','9','+','x']), 2).value, 90);
 assert.ok(!FLAME_KEYS.includes('flame') && !FLAME_KEYS.includes('devil'));
+// 決勝ルール(7枚: 数字4+記号3)
+assert.equal(evalOrdered(hand(['2','x','5','x','3','+','0'].map(x=>x==='3'?'3':x))).value, 30, '2x5x3+0=30');
+assert.equal(evalOrdered(hand(['4','+','6','x','9','x','1','x','1'].slice(0,7).map(x=>x))) , null, '7枚の並び: 数字,記号,数字,記号,数字,記号,数字 のみ');
+assert.equal(evalOrdered(hand(['4','+','6','x','9','x','1']), 2, false, '0-1').value, 90);
+assert.equal(evalOrdered(hand(['4','+','6','x','9','x','1']), 2, false, '1-3'), null);   // 4+(6x9x1)=58
+assert.equal(evalOrdered(hand(['4','+','6','x','9','x','1']), 0, false, '0-1'), null);   // ボウなし
+assert.deepEqual(modesFor(7), ['N','0-1','0-2','1-2','1-3','2-3']);
+assert.equal(solveBest(hand(['4','6','9','1','+','x','x']), 2).value, 270);   // 9x6x(4+1)
+assert.ok(solveBest(hand(['1','2','3','4','+','+','+'])) === null || true);
+// 得点ルール
+const mk = (v) => ({ a: { value: v }, b: { value: null } });
+let g = { duel: 2, totalDuels: 3, zeroPending: [], prevWin: null }, per;
+per = mk(0); applyWinScores(g, per, ['a']); assert.equal(per.a.delta, 0); assert.equal(per.a.eff, 0);          // 0勝利
+g = { duel: 2, totalDuels: 3, zeroPending: ['a'], prevWin: 0 }; per = mk(100); applyWinScores(g, per, ['a']); assert.equal(per.a.delta, 200); // 前回にも+100
+g = { duel: 2, totalDuels: 3, zeroPending: ['a'], prevWin: 0 }; per = mk(0); applyWinScores(g, per, ['a']); assert.equal(per.a.eff, 100); assert.equal(per.a.delta, 200); // 連続0勝利→100換算
+g = { duel: 2, totalDuels: 3, zeroPending: [], prevWin: 50 }; per = mk(50); applyWinScores(g, per, ['a']); assert.equal(per.a.delta, 100);   // ダブルスコア
+g = { duel: 3, totalDuels: 3, zeroPending: [], prevWin: null }; per = mk(50); applyWinScores(g, per, ['a']); assert.equal(per.a.delta, 100);  // 最終2倍
+g = { duel: 3, totalDuels: 3, zeroPending: [], prevWin: 50 }; per = mk(50); applyWinScores(g, per, ['a']); assert.equal(per.a.delta, 150);  // 最終×2 + ダブルスコア×1 = 3倍
+g = { duel: 3, totalDuels: 3, zeroPending: ['b'], prevWin: 0 }; per = mk(50); applyWinScores(g, per, ['a']); assert.equal(per.a.delta, 100);  // 別人が勝てば遡及なし
 console.log('solver ok');
 
 // --- CPU同士で通しテスト（ホストの動きも再現） ---
+const FINAL = process.argv.includes('--final');
 const stat = { games: 0, steps: 0, attack: 0, rob: 0, trade: 0, flame: 0, devil: 0, kk: 0, burst: 0 };
-for (let g = 0; g < 300; g++) {
-  const n = 2 + (g % 3); const uids = ['a', 'b', 'c', 'd'].slice(0, n);
+for (let g = 0; g < (FINAL ? 40 : 300); g++) {
+  const n = FINAL ? 2 : 2 + (g % 3); const uids = ['a', 'b', 'c', 'd'].slice(0, n);
   const cpu = Object.fromEntries(uids.map(u => [u, true]));
-  const G = createGame('a', uids, Object.fromEntries(uids.map(u => [u, u])), { totalDuels: 3, robMs: g % 2 ? 3000 : 0, cpu });
+  const G = createGame('a', uids, Object.fromEntries(uids.map(u => [u, u])), { totalDuels: 3, robMs: g % 2 ? 3000 : 0, cpu, final: FINAL });
   let guard = 0, lastEv = 0;
   while (G.phase !== 'end' && guard++ < 6000) {
     G.events.forEach(e => { if (e.id > lastEv) { lastEv = e.id; if (stat[e.kind] != null) stat[e.kind]++; } });

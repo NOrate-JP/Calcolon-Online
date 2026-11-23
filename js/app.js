@@ -216,8 +216,9 @@ function act(name, el) {
     case 'start': {
       const ps = Object.entries(S.players).map(([uid, v]) => ({ uid, ...v })).sort((a, b) => a.joinedAt - b.joinedAt).slice(0, 4);
       if (ps.length < 2) return toast('2人以上必要です');
+      if (S.meta.finalRule && ps.length !== 2) return toast('決勝ルールは2人専用です（CPU追加/退出で2人にしてください）');
       if (!S.host) return toast('ホストの準備中です。少し待ってください');
-      return S.host.startGame(ps, { totalDuels: S.meta.totalDuels, robMs: S.meta.robMs });
+      return S.host.startGame(ps, { totalDuels: S.meta.totalDuels, robMs: S.meta.robMs, finalRule: !!S.meta.finalRule });
     }
     case 'draw': return send({ t: 'draw' });
     case 'attack': return send({ t: 'attack', order: S.order.slice(), mode: modeOf(S) });
@@ -286,6 +287,7 @@ document.addEventListener('dragend', () => { S.drag = null; document.querySelect
 document.addEventListener('change', e => {
   if (!S.meta || S.meta.hostUid !== S.uid) return;
   if (e.target.id === 'sel-duels') FB.update(FB.ref(FB.db, `rooms/${S.code}/meta`), { totalDuels: +e.target.value });
+  if (e.target.id === 'sel-final') FB.update(FB.ref(FB.db, `rooms/${S.code}/meta`), { finalRule: e.target.value === '1' });
   if (e.target.id === 'sel-rob') FB.update(FB.ref(FB.db, `rooms/${S.code}/meta`), { robMs: +e.target.value });
 });
 

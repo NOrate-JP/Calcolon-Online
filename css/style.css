@@ -258,3 +258,12 @@ button{font:inherit}
 @media (max-width:760px){
   .bowfield{bottom:calc(clamp(46px,15.5vw,92px) + 50px);right:6px}
 }
+
+/* 決勝ルール(7〜8枚の手札)・結果の補足 */
+.settings .span2{grid-column:1/-1}
+.hand.n6 .card,.hand.n6 .paren{--cw:clamp(44px,12vw,108px)}
+.hand.n7 .card,.hand.n7 .paren{--cw:clamp(38px,10.4vw,100px)}
+.hand.n8 .card,.hand.n8 .paren{--cw:clamp(34px,9.2vw,92px)}
+.hand.n7 .card,.hand.n8 .card{margin:0 1px}
+.rnote{font-size:12px;color:#ffd86b;margin-top:2px}
+.rcards{flex-wrap:wrap}

@@ -27,7 +27,7 @@ export class Host {
   startGame(players, opts) {
     const uids = players.map(x => x.uid), names = Object.fromEntries(players.map(x => [x.uid, x.name]));
     const cpu = Object.fromEntries(players.filter(x => x.cpu).map(x => [x.uid, true]));
-    this.G = createGame(this.uid, uids, names, { ...opts, cpu });
+    this.G = createGame(this.uid, uids, names, { ...opts, cpu, final: !!opts.finalRule });
     this.robScheduled = -1; this.cutScheduled = -1; this.showScheduled = -1;
     this.afterChange();
     return update(ref(db, this.p('meta')), { status: 'playing' });
